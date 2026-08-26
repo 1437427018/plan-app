@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>我的 PWA App</title>
+
+  <!-- PWA 核心：指向 manifest -->
+  <link rel="manifest" href="manifest.webmanifest" />
+
+  <!-- iOS 专属：让 Safari 支持“添加到主屏幕”后全屏运行 -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="我的App" />
+  <!-- iPhone 主屏图标（iOS 只认 PNG，不认 SVG） -->
+  <link rel="apple-touch-icon" href="icon-180.png" />
+
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+      padding: env(safe-area-inset-top) 16px 16px;
+      background: #0f1729; color: #e6edf3;
+    }
+    header { padding: 16px 0; font-size: 20px; font-weight: 600; }
+    .card { background: #1b263b; border-radius: 12px; padding: 16px; margin: 12px 0; }
+    button {
+      background: #378add; color: #fff; border: 0; border-radius: 8px;
+      padding: 10px 16px; font-size: 15px; cursor: pointer;
+    }
+    #net { color: #9fe1cb; word-break: break-all; font-size: 13px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <header>我的 PWA App</header>
+
+  <div class="card">
+    <div>当前时间：<span id="clock"></span></div>
+  </div>
+
+  <div class="card">
+    <button id="btn">点击测试联网</button>
+    <p id="net">（联网结果会显示在这里）</p>
+  </div>
+
+  <script>
+    // 1) 一个本地逻辑示例：实时时钟
+    function tick() {
+      document.getElementById('clock').textContent = new Date().toLocaleString();
+    }
+    setInterval(tick, 1000);
+    tick();
+
+    // 2) 联网示例：请求一个公开 API（演示 PWA 的联网能力）
+    document.getElementById('btn').addEventListener('click', async () => {
+      const el = document.getElementById('net');
+      el.textContent = '请求中...';
+      try {
+        const r = await fetch('https://api.ipify.org?format=json');
+        const j = await r.json();
+        el.textContent = '你的公网 IP：' + j.ip;
+      } catch (e) {
+        el.textContent = '联网失败：' + e.message;
+      }
+    });
+
+    // 3) 注册 Service Worker（实现离线缓存，让 app 断网也能开）
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js')
+          .catch(e => console.log('SW 注册失败', e));
+      });
+    }
+  </script>
+</body>
+</html>
