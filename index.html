@@ -168,7 +168,7 @@
   <div id="toast"></div>
 
   <script>
-  /* ============ 存储（本机个人数据） ============ */
+  /* ============ 存储（本机个人数据，兼作云端缓存） ============ */
   const KEY = 'planapp_v1';
   const todayStr = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
@@ -180,7 +180,8 @@
     return { yearGoals:[], monthGoals:[], tasks:[], habits:[], specialDates:[],
              warmMessage:{text:'',updatedAt:null}, whispers:[], sharedList:[], cleared:{} };
   }
-  let S = (() => { try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(KEY))||{}); } catch(e){ return defaultState(); } })();
+  const loadLocal = () => { try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(KEY))||{}); } catch(e){ return defaultState(); } };
+  let S = loadLocal();
   const save = () => localStorage.setItem(KEY, JSON.stringify(S));
 
   /* ============ Supabase（公开 anon key，仅用于前端登录与两人共享） ============ */
@@ -188,6 +189,8 @@
   const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhvb2Zob2Jsc2JuaXZ0YnhxZHVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4ODMyNDMsImV4cCI6MjEwMzQ1OTI0M30.oYEYi3l6KTvkTXLO7kevdCX2UiDLKlGkAy5PIWYgqk4';
   let sb = null, me = null, myRel = null, partnerId = null;
   let cloudWhispers = [], cloudList = null, cloudReady = false, rtChannel = null;
+
+  const cloudMode = () => !!(sb && me);
 
   async function initSB(){
     if(!window.supabase) return;            // 离线时跳过，全部本机
@@ -215,6 +218,7 @@
     } else {
       myRel = null; partnerId = null; cloudReady = false;
     }
+    await pullPlans();   // 登录后拉取个人计划（年/月/日/习惯/特别日子）
   }
 
   async function refreshCloud(){
@@ -235,15 +239,117 @@
     rtChannel = sb.channel('cloud-'+myRel.id)
       .on('postgres_changes', { event:'*', schema:'public', table:'whispers' }, refreshCloud)
       .on('postgres_changes', { event:'*', schema:'public', table:'shared_lists', filter:`relationship_id=eq.${myRel.id}` }, refreshCloud)
+      .on('postgres_changes', { event:'*', schema:'public', table:'tasks' }, debouncedPull)
+      .on('postgres_changes', { event:'*', schema:'public', table:'year_goals' }, debouncedPull)
+      .on('postgres_changes', { event:'*', schema:'public', table:'month_goals' }, debouncedPull)
+      .on('postgres_changes', { event:'*', schema:'public', table:'habits' }, debouncedPull)
+      .on('postgres_changes', { event:'*', schema:'public', table:'special_dates' }, debouncedPull)
       .subscribe();
   }
   function stopRealtime(){ if(rtChannel){ sb?.removeChannel(rtChannel); rtChannel=null; } }
+
+  /* ============ 云端计划数据层（年/月/日/习惯/特别日子） ============ */
+  const PLAN_TABLES = { yearGoals:'year_goals', monthGoals:'month_goals', tasks:'tasks', habits:'habits', specialDates:'special_dates' };
+
+  function toCloud(kind, r){
+    switch(kind){
+      case 'yearGoals':   return { title:r.title, description:r.desc, year:r.year };
+      case 'monthGoals':  return { title:r.title, month:r.month, year_goal_id:r.yearGoalId||null };
+      case 'tasks':       return { title:r.title, status:r.status, created_date:r.createdDate, plan_date:r.currentDate, original_date:r.originalDate, done_time:r.doneTime, delay_count:r.delayCount };
+      case 'habits':      return { name:r.name, done_dates:r.doneDates };
+      case 'specialDates':return { title:r.title, date:r.date };
+    }
+  }
+  function fromCloud(kind, r){
+    switch(kind){
+      case 'yearGoals':   return { id:r.id, title:r.title, desc:r.description, year:r.year };
+      case 'monthGoals':  return { id:r.id, title:r.title, month:r.month, yearGoalId:r.year_goal_id };
+      case 'tasks':       return { id:r.id, title:r.title, status:r.status, createdDate:r.created_date, currentDate:r.plan_date, originalDate:r.original_date, doneTime:r.done_time, delayCount:r.delay_count };
+      case 'habits':      return { id:r.id, name:r.name, doneDates:r.done_dates||[] };
+      case 'specialDates':return { id:r.id, title:r.title, date:r.date };
+    }
+  }
+  // 本地新增：先入本机，云端模式再插入并回填云 id
+  async function syncInsert(kind, localRow){
+    S[kind].push(localRow); save();
+    if(cloudMode()){
+      const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, localRow)).select().single();
+      if(error){ toast(error.message); return; }
+      localRow.id = data.id; save();
+    }
+  }
+  // 本地修改：对象已就地改好，云端模式同步更新
+  async function syncUpdate(kind, localRow){
+    save();
+    if(cloudMode()){
+      const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, localRow)).eq('id', localRow.id);
+      if(error) toast(error.message);
+    }
+  }
+  // 本地删除
+  async function syncDelete(kind, id){
+    S[kind] = S[kind].filter(x => x.id !== id); save();
+    if(cloudMode()){
+      const { error } = await sb.from(PLAN_TABLES[kind]).delete().eq('id', id);
+      if(error) toast(error.message);
+    }
+  }
+
+  let syncing = false, pullT = null;
+  function debouncedPull(){ clearTimeout(pullT); pullT = setTimeout(pullPlans, 500); }
+  async function pullPlans(){
+    if(!cloudMode() || syncing) return;
+    syncing = true;
+    try {
+      const [yg, mg, tk, hb, sd] = await Promise.all([
+        sb.from('year_goals').select('*'),
+        sb.from('month_goals').select('*'),
+        sb.from('tasks').select('*'),
+        sb.from('habits').select('*'),
+        sb.from('special_dates').select('*'),
+      ]);
+      const cloudEmpty = !((yg.data||[]).length || (mg.data||[]).length || (tk.data||[]).length || (hb.data||[]).length || (sd.data||[]).length);
+      const localHad = S.yearGoals.length || S.monthGoals.length || S.tasks.length || S.habits.length || S.specialDates.length;
+      if(cloudEmpty && localHad){
+        // 首登且云端空：把本机已有的计划迁移上云
+        await seedLocalToCloud();
+        const [yg2, mg2, tk2, hb2, sd2] = await Promise.all([
+          sb.from('year_goals').select('*'), sb.from('month_goals').select('*'),
+          sb.from('tasks').select('*'), sb.from('habits').select('*'), sb.from('special_dates').select('*'),
+        ]);
+        S.yearGoals = (yg2.data||[]).map(r=>fromCloud('yearGoals',r));
+        S.monthGoals = (mg2.data||[]).map(r=>fromCloud('monthGoals',r));
+        S.tasks = (tk2.data||[]).map(r=>fromCloud('tasks',r));
+        S.habits = (hb2.data||[]).map(r=>fromCloud('habits',r));
+        S.specialDates = (sd2.data||[]).map(r=>fromCloud('specialDates',r));
+      } else {
+        S.yearGoals = (yg.data||[]).map(r=>fromCloud('yearGoals',r));
+        S.monthGoals = (mg.data||[]).map(r=>fromCloud('monthGoals',r));
+        S.tasks = (tk.data||[]).map(r=>fromCloud('tasks',r));
+        S.habits = (hb.data||[]).map(r=>fromCloud('habits',r));
+        S.specialDates = (sd.data||[]).map(r=>fromCloud('specialDates',r));
+      }
+      save();
+    } catch(e){ console.warn('pullPlans 失败', e); }
+    finally { syncing = false; render(); }
+  }
+  async function seedLocalToCloud(){
+    const seed = async (kind) => {
+      for(const r of S[kind]){
+        const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, r)).select().single();
+        if(!error && data) r.id = data.id;
+      }
+    };
+    await seed('yearGoals'); await seed('monthGoals'); await seed('tasks'); await seed('habits'); await seed('specialDates');
+    save();
+  }
 
   /* ============ 工具 ============ */
   function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),1800); }
   function openSheet(html){ document.getElementById('sheet').innerHTML=html; document.getElementById('mask').classList.add('show'); }
   function closeSheet(){ document.getElementById('mask').classList.remove('show'); }
   document.getElementById('mask').addEventListener('click', e => { if(e.target.id==='mask') closeSheet(); });
+  const v = id => (document.getElementById(id)?.value || '').trim();
 
   /* ============ 账号 / 配对 ============ */
   function openAccount(){
@@ -255,16 +361,21 @@
           <button class="block" style="margin-top:10px" id="doLogin">登录</button>
           <button class="block soft" style="margin-top:8px" id="doSignup">注册新账号</button>
         </div>
-        <div class="muted" style="text-align:center;margin-top:6px">两人各注册一个账号，配对后即可共享。</div>`);
+        <div class="muted" style="text-align:center;margin-top:6px">两人各注册一个账号，配对后即可共享。注册后自动登录。</div>`);
       document.getElementById('doLogin').onclick = async () => {
-        const { error } = await sb.auth.signInWithPassword({ email: v('accEmail'), password: v('accPass') });
+        const email = v('accEmail'), pass = v('accPass');
+        if(!email || pass.length<6) return toast('请填邮箱，密码至少 6 位');
+        const { error } = await sb.auth.signInWithPassword({ email, password });
         if(error) return toast(error.message);
         closeSheet(); toast('登录成功 ✓');
       };
       document.getElementById('doSignup').onclick = async () => {
-        const { error } = await sb.auth.signUp({ email: v('accEmail'), password: v('accPass') });
+        const email = v('accEmail'), pass = v('accPass');
+        if(!email || pass.length<6) return toast('请填邮箱，密码至少 6 位');
+        const { data, error } = await sb.auth.signUp({ email, password });
         if(error) return toast(error.message);
-        closeSheet(); toast('注册成功，去邮箱点确认链接（若开启）');
+        closeSheet();
+        toast(data.session ? '注册成功，已自动登录 ✓' : '注册成功，去邮箱点确认后登录');
       };
       return;
     }
@@ -297,7 +408,6 @@
       <button class="block ghost" id="doLogout">退出登录</button>`);
     document.getElementById('doLogout').onclick = async () => { await sb.auth.signOut(); closeSheet(); toast('已退出'); };
   }
-  const v = id => document.getElementById(id).value.trim();
 
   /* ============ 视图切换 ============ */
   const TABS = [
@@ -373,19 +483,19 @@
   }
   function bindView(){
     const addT = document.getElementById('addTask');
-    if(addT) addT.onclick = () => { const i=document.getElementById('newTask'); const v=i.value.trim(); if(!v) return; S.tasks.push({id:uid(),title:v,status:'todo',createdDate:todayStr(),currentDate:todayStr(),originalDate:todayStr(),doneTime:null,delayCount:0}); save(); render(); };
+    if(addT) addT.onclick = () => { const i=document.getElementById('newTask'); const t=i.value.trim(); if(!t) return; const row={id:uid(),title:t,status:'todo',createdDate:todayStr(),currentDate:todayStr(),originalDate:todayStr(),doneTime:null,delayCount:0}; syncInsert('tasks', row).then(render); };
     const nt = document.getElementById('newTask');
     if(nt) nt.onkeydown = e => { if(e.key==='Enter') addT.click(); };
 
     document.querySelectorAll('.task').forEach(el=>{
       const id=el.dataset.id; const task=S.tasks.find(x=>x.id===id); if(!task) return;
-      el.querySelector('[data-act=toggle]').onclick = () => {
+      el.querySelector('[data-act=toggle]').onclick = async () => {
         if(task.status==='done'){ task.status='todo'; task.doneTime=null; }
         else { task.status='done'; task.doneTime=Date.now(); }
-        save(); render();
+        await syncUpdate('tasks', task); render();
       };
-      el.querySelector('[data-act=del]').onclick = () => {
-        if(confirm('删除这件事？')){ S.tasks=S.tasks.filter(x=>x.id!==id); save(); render(); }
+      el.querySelector('[data-act=del]').onclick = async () => {
+        if(confirm('删除这件事？')){ await syncDelete('tasks', id); render(); }
       };
     });
 
@@ -415,14 +525,13 @@
     openSheet(html);
     document.getElementById('closeSheet').onclick = () => { S.cleared[t]=true; save(); closeSheet(); render(); toast('今天收尾完成 ✓'); };
     document.querySelectorAll('#sheet [data-act]').forEach(b=>{
-      b.onclick = () => {
+      b.onclick = async () => {
         const task = S.tasks.find(x=>x.id===b.dataset.id); if(!task) return;
         const a=b.dataset.act;
         if(a==='done'){ task.status='done'; task.doneTime=Date.now(); }
         else if(a==='delay'){ task.status='delayed'; task.currentDate=addDays(t,1); task.delayCount++; }
         else if(a==='skip'){ task.status='skipped'; }
-        save(); render();
-        closeSheet(); render();
+        await syncUpdate('tasks', task); closeSheet(); render();
         if(S.tasks.filter(x=>x.currentDate===todayStr()&&x.status==='todo').length===0){ S.cleared[t]=true; save(); }
         render();
       };
@@ -447,8 +556,8 @@
   }
   function bindMonth(){
     const a=document.getElementById('addMonth'); if(!a) return;
-    a.onclick=()=>{ const i=document.getElementById('mTitle'); const v=i.value.trim(); if(!v) return; S.monthGoals.push({id:uid(),title:v,month:todayStr().slice(0,7),yearGoalId:document.getElementById('mYear').value||null,done:false}); save(); render(); };
-    document.querySelectorAll('[data-delmonth]').forEach(b=>b.onclick=()=>{ S.monthGoals=S.monthGoals.filter(x=>x.id!==b.dataset.delmonth); save(); render(); });
+    a.onclick=()=>{ const t=document.getElementById('mTitle').value.trim(); if(!t) return; const row={id:uid(),title:t,month:todayStr().slice(0,7),yearGoalId:document.getElementById('mYear').value||null,done:false}; syncInsert('monthGoals', row).then(render); };
+    document.querySelectorAll('[data-delmonth]').forEach(b=>b.onclick=async ()=>{ await syncDelete('monthGoals', b.dataset.delmonth); render(); });
   }
 
   /* ============ 年 ============ */
@@ -468,8 +577,8 @@
   }
   function bindYear(){
     const a=document.getElementById('addYear'); if(!a) return;
-    a.onclick=()=>{ const t=document.getElementById('yTitle').value.trim(); if(!t) return; S.yearGoals.push({id:uid(),title:t,desc:document.getElementById('yDesc').value.trim(),year:todayStr().slice(0,4)}); save(); render(); };
-    document.querySelectorAll('[data-delyear]').forEach(b=>b.onclick=()=>{ S.yearGoals=S.yearGoals.filter(x=>x.id!==b.dataset.delyear); save(); render(); });
+    a.onclick=()=>{ const t=document.getElementById('yTitle').value.trim(); if(!t) return; const row={id:uid(),title:t,desc:document.getElementById('yDesc').value.trim(),year:todayStr().slice(0,4)}; syncInsert('yearGoals', row).then(render); };
+    document.querySelectorAll('[data-delyear]').forEach(b=>b.onclick=async ()=>{ await syncDelete('yearGoals', b.dataset.delyear); render(); });
   }
 
   /* ============ 习惯 ============ */
@@ -494,9 +603,9 @@
   }
   function bindHabit(){
     const a=document.getElementById('addHabit'); if(!a) return;
-    a.onclick=()=>{ const v=document.getElementById('hName').value.trim(); if(!v) return; S.habits.push({id:uid(),name:v,doneDates:[]}); save(); render(); };
-    document.querySelectorAll('[data-habit]').forEach(b=>b.onclick=()=>{ const hb=S.habits.find(x=>x.id===b.dataset.habit); const t=todayStr(); const i=hb.doneDates.indexOf(t); if(i>=0) hb.doneDates.splice(i,1); else hb.doneDates.push(t); save(); render(); });
-    document.querySelectorAll('[data-delhabit]').forEach(b=>b.onclick=()=>{ S.habits=S.habits.filter(x=>x.id!==b.dataset.delhabit); save(); render(); });
+    a.onclick=()=>{ const t=document.getElementById('hName').value.trim(); if(!t) return; const row={id:uid(),name:t,doneDates:[]}; syncInsert('habits', row).then(render); };
+    document.querySelectorAll('[data-habit]').forEach(b=>b.onclick=async ()=>{ const hb=S.habits.find(x=>x.id===b.dataset.habit); const t=todayStr(); const i=hb.doneDates.indexOf(t); if(i>=0) hb.doneDates.splice(i,1); else hb.doneDates.push(t); await syncUpdate('habits', hb); render(); });
+    document.querySelectorAll('[data-delhabit]').forEach(b=>b.onclick=async ()=>{ await syncDelete('habits', b.dataset.delhabit); render(); });
   }
 
   /* ============ 更多 ============ */
@@ -507,7 +616,7 @@
     return Math.round((next - t)/86400000);
   }
   function viewMore(){
-    // 特别日子（本机）
+    // 特别日子（云端 or 本机）
     let sd = `<div class="section-title">特别日子</div>`;
     if(S.specialDates.length){
       S.specialDates.slice().sort((a,b)=>daysUntil(a.date)-daysUntil(b.date)).forEach(x=>{
@@ -560,8 +669,8 @@
     return sd + warm + wh + sl;
   }
   function bindMore(){
-    const as=document.getElementById('addSd'); if(as) as.onclick=()=>{ const d=document.getElementById('sdDate').value; const t=document.getElementById('sdTitle').value.trim(); if(!d||!t) return; S.specialDates.push({id:uid(),date:d,title:t}); save(); render(); };
-    document.querySelectorAll('[data-delsd]').forEach(b=>b.onclick=()=>{ S.specialDates=S.specialDates.filter(x=>x.id!==b.dataset.delsd); save(); render(); });
+    const as=document.getElementById('addSd'); if(as) as.onclick=()=>{ const d=document.getElementById('sdDate').value; const t=document.getElementById('sdTitle').value.trim(); if(!d||!t) return; const row={id:uid(),date:d,title:t}; syncInsert('specialDates', row).then(render); };
+    document.querySelectorAll('[data-delsd]').forEach(b=>b.onclick=async ()=>{ await syncDelete('specialDates', b.dataset.delsd); render(); });
 
     const sw=document.getElementById('saveWarm'); if(sw) sw.onclick=()=>{ S.warmMessage={text:document.getElementById('warmText').value,updatedAt:Date.now()}; save(); toast('已保存 ✓'); };
 
