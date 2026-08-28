@@ -1,5 +1,5 @@
-// Service Worker：负责离线缓存，让 PWA 断网也能打开
-const CACHE = 'pwa-demo-v1';
+// Service Worker：离线缓存，让 PWA 断网也能打开
+const CACHE = 'planapp-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -9,7 +9,6 @@ const ASSETS = [
   './icon-180.png'
 ];
 
-// 安装时缓存所有资源
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE).then(cache => cache.addAll(ASSETS))
@@ -17,7 +16,6 @@ self.addEventListener('install', event => {
   self.skipWaiting();
 });
 
-// 激活时清理旧缓存
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -27,7 +25,6 @@ self.addEventListener('activate', event => {
   self.clients.claim();
 });
 
-// 拦截请求：优先用缓存，没有再走网络
 self.addEventListener('fetch', event => {
   event.respondWith(
     caches.match(event.request).then(hit =>
