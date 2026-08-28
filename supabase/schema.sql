@@ -65,7 +65,7 @@ create table if not exists tasks (
   status text not null default 'todo'
     check (status in ('todo','done','delayed','skipped')),
   created_date date default current_date,
-  current_date date default current_date,
+  plan_date date default current_date,
   original_date date default current_date,
   done_time timestamptz,
   delay_count int default 0,
