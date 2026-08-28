@@ -252,12 +252,13 @@
   const PLAN_TABLES = { yearGoals:'year_goals', monthGoals:'month_goals', tasks:'tasks', habits:'habits', specialDates:'special_dates' };
 
   function toCloud(kind, r){
+    const base = { user_id: me.id };   // RLS 要求 user_id = auth.uid()，必须显式带上
     switch(kind){
-      case 'yearGoals':   return { title:r.title, description:r.desc, year:r.year };
-      case 'monthGoals':  return { title:r.title, month:r.month, year_goal_id:r.yearGoalId||null };
-      case 'tasks':       return { title:r.title, status:r.status, created_date:r.createdDate, plan_date:r.currentDate, original_date:r.originalDate, done_time:r.doneTime, delay_count:r.delayCount };
-      case 'habits':      return { name:r.name, done_dates:r.doneDates };
-      case 'specialDates':return { title:r.title, date:r.date };
+      case 'yearGoals':   return { ...base, title:r.title, description:r.desc, year:r.year };
+      case 'monthGoals':  return { ...base, title:r.title, month:r.month, year_goal_id:r.yearGoalId||null };
+      case 'tasks':       return { ...base, title:r.title, status:r.status, created_date:r.createdDate, plan_date:r.currentDate, original_date:r.originalDate, done_time:r.doneTime, delay_count:r.delayCount };
+      case 'habits':      return { ...base, name:r.name, done_dates:r.doneDates };
+      case 'specialDates':return { ...base, title:r.title, date:r.date };
     }
   }
   function fromCloud(kind, r){
