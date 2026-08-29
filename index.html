@@ -260,12 +260,43 @@
 
   function defaultState(){
     return { yearGoals:[], monthGoals:[], tasks:[], habits:[], specialDates:[],
-             pendingDeletes:[],   // 断网时删掉的、还没能从云端删掉的记录
-             warmMessage:{text:'',updatedAt:null}, whispers:[], sharedList:[], cleared:{} };
+             pendingDeletes:[],   // 待从云端删除的记录
+             warmMessage:{text:'',updatedAt:null},
+             warmMessageCloudId: null,  // 云端 warm_messages 行的 uuid
+             warmed:{},                  // 已展示过的悄悄话 id（防重复显示）
+             whispers:[], sharedList:[], cleared:{} };
   }
   const loadLocal = () => { try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(KEY))||{}); } catch(e){ return defaultState(); } };
   let S = loadLocal();
-  const save = () => localStorage.setItem(KEY, JSON.stringify(S));
+  let save = () => localStorage.setItem(KEY, JSON.stringify(S));
+
+  /* ============ 用户设置（warmMessage + cleared 同步） ============ */
+  async function loadUserSettings(){
+    if(!cloudMode() || !sb || !me) return;
+    try {
+      const { data } = await sb.from('user_settings').select('warm_message, cleared').eq('user_id', me.id).single();
+      if(!data) return;
+      if(data.warm_message && (data.warm_message.text || S.warmMessage?.updatedAt)){
+        S.warmMessage = data.warm_message;
+      }
+      if(data.cleared && typeof data.cleared === 'object'){
+        S.cleared = data.cleared;
+      }
+    } catch(e){ console.warn('加载 user_settings 失败', e); }
+  }
+  async function saveUserSettings(){
+    if(!cloudMode() || !sb || !me) return;
+    try {
+      await sb.from('user_settings').upsert({
+        user_id: me.id,
+        warm_message: { text: S.warmMessage.text || '', updatedAt: S.warmMessage.updatedAt || null },
+        cleared: S.cleared || {},
+      }, { onConflict: 'user_id' });
+    } catch(e){ console.warn('保存 user_settings 失败', e); }
+  }
+  // save() 也触发云端设置同步（warmMessage/cleared 很少变，无性能问题）
+  const _origSave = save;
+  save = () => { _origSave(); if(cloudMode()){ saveUserSettings(); } };
 
   /* ============ Supabase（公开 anon key，仅用于前端登录与两人共享） ============ */
   const SB_URL = 'https://hoofhoblsbnivtbxqduq.supabase.co';
@@ -288,8 +319,8 @@
       else showAuth();
 
       sb.auth.onAuthStateChange(async (e, session) => {
-        me = session?.user || null;
-        if(me){ guest = false; hideAuth(); await loadRelationship(); }
+      me = session?.user || null;
+      if(me){ guest = false; hideAuth(); await loadUserSettings(); await loadRelationship(); }
         else {
           myRel = null; partnerId = null; cloudReady = false; stopRealtime();
           if(!guest) showAuth();          // 退出登录 → 回到登录页
@@ -388,18 +419,26 @@
   async function syncInsert(kind, row){
     row.updatedAt = Date.now();
     row.cloudPending = true;
+    row._retryCount = 0;                          // 失败重试计数，防止死循环
     S[kind].push(row); save();
     await flushPending();
   }
   async function syncUpdate(kind, row){
     row.updatedAt = Date.now();
     row.cloudPending = true;
+    row._retryCount = 0;
     save();
     await flushPending();
   }
   async function syncDelete(kind, id){
     const row = S[kind].find(x => x.id === id);
-    if(row && isUuid(row.id)) S.pendingDeletes.push({ kind, id: row.id });
+    if(row && isUuid(row.id)){
+      S.pendingDeletes.push({ kind, id: row.id });
+    } else if(row && !isUuid(row.id)){
+      // 短 id 没上过云 → 本地删了就行，云端不存在，不需要删
+      // 但还是要保留在 pendingDeletes 以防万一以后上云
+      S.pendingDeletes.push({ kind, id: row.id, localOnly: true });
+    }
     S[kind] = S[kind].filter(x => x.id !== id);
     save();
     await flushPending();
@@ -411,24 +450,34 @@
     if(!cloudMode() || flushing) return;
     flushing = true;
     try {
+      // 先把所有待传行收集为 {kind, row} 对（避免 S[kind] 被 pullPlans 替换引用）
+      const pending = [];
       for(const kind of Object.keys(PLAN_TABLES)){
-        for(const r of S[kind].filter(x => x.cloudPending)){
-          if(isUuid(r.id)){
-            const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, r)).eq('id', r.id);
-            if(error) continue;                        // 失败就留在队列，下轮再试
-          } else {
-            const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, r)).select().single();
-            if(error) continue;
-            r.id = data.id;                            // 回填云端 uuid
-          }
-          delete r.cloudPending; save();
+        for(const r of S[kind]){
+          if(r.cloudPending){ pending.push({ kind, row: r }); }
         }
       }
-      if(S.pendingDeletes.length){
+      for(const { kind, row: r } of pending){
+        if(!cloudMode()) break;                    // 中途断网，停止处理
+        try {
+          if(isUuid(r.id)){
+            const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, r)).eq('id', r.id);
+            if(error){ r._retryCount = (r._retryCount||0) + 1; if(r._retryCount >= 3) { delete r.cloudPending; r._retryCount = 0; } continue; }
+          } else {
+            const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, r)).select().single();
+            if(error){ r._retryCount = (r._retryCount||0) + 1; if(r._retryCount >= 3) { delete r.cloudPending; r._retryCount = 0; } continue; }
+            r.id = data.id;
+          }
+          delete r.cloudPending; delete r._retryCount; save();
+        } catch(e){ console.warn('flushPending 单行失败', e); }
+      }
+      if(S.pendingDeletes.length && cloudMode()){
         const rest = [];
         for(const d of S.pendingDeletes){
-          const { error } = await sb.from(PLAN_TABLES[d.kind]).delete().eq('id', d.id);
-          if(error) rest.push(d);
+          try {
+            const { error } = await sb.from(PLAN_TABLES[d.kind]).delete().eq('id', d.id);
+            if(error){ console.warn('pendingDelete 失败', d, error); rest.push(d); }
+          } catch(e){ console.warn('pendingDelete 异常', e); rest.push(d); }
         }
         S.pendingDeletes = rest; save();
       }
@@ -446,13 +495,21 @@
     const cloudById = new Map(cloudRows.map(r => [r.id, r]));
     const out = [];
     for(const local of localRows){
+      if(local.cloudPending){
+        // 本机新增但还没上传：保留，不让云端旧版覆盖
+        // 如果是短 id，说明还没上云，必须保留（云端的同标题是无关记录）
+        if(isUuid(local.id)){
+          cloudById.delete(local.id);               // 从云端里排除，避免重复
+        }
+        out.push(local);
+        continue;
+      }
       const c = cloudById.get(local.id);
       if(c) cloudById.delete(local.id);
-      if(local.cloudPending) out.push(local);                    // 待上传，先保住
-      else if(!c) continue;                                      // 云端已经没了 → 本机跟着删
-      else out.push((c.updatedAt || 0) > (local.updatedAt || 0) ? c : local);
+      if(!c) continue;                              // 云端已删 → 本机跟着删
+      out.push((c.updatedAt || 0) > (local.updatedAt || 0) ? c : local);
     }
-    for(const c of cloudById.values()) out.push(c);              // 别的设备新增的
+    for(const c of cloudById.values()) out.push(c);  // 别的设备新增的
     return out;
   }
 

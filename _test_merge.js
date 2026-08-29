@@ -2,6 +2,9 @@
 const fs = require('fs');
 const html = fs.readFileSync('index.html', 'utf8');
 
+// 需要 isUuid 定义
+const isUuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || '');
+
 const head = html.match(/function mergeRows\(localRows, cloudRows\)\s*\{/);
 if (!head) { console.error('没找到 mergeRows'); process.exit(1); }
 let i = html.indexOf('{', head.index), depth = 0;
