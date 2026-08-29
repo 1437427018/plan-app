@@ -1,5 +1,5 @@
 // Service Worker：离线缓存，让 PWA 断网也能打开
-const CACHE = 'planapp-v5';
+const CACHE = 'planapp-v6';
 const ASSETS = [
   './',
   './index.html',
@@ -26,9 +26,28 @@ self.addEventListener('activate', event => {
 });
 
 self.addEventListener('fetch', event => {
+  const req = event.request;
+  const isPage = req.mode === 'navigate'
+    || req.url.endsWith('/')
+    || req.url.endsWith('/index.html');
+
+  // 页面本身：网络优先。改完代码刷新就能看到，不用手动升缓存版本；
+  // 断网时才回退到缓存，保证离线还能打开。
+  if (isPage) {
+    event.respondWith(
+      fetch(req).then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put('./index.html', copy)).catch(() => {});
+        return res;
+      }).catch(() => caches.match('./index.html'))
+    );
+    return;
+  }
+
+  // 图标 / manifest 这类静态资源：缓存优先，几乎不变
   event.respondWith(
-    caches.match(event.request).then(hit =>
-      hit || fetch(event.request).catch(() => caches.match('./index.html'))
+    caches.match(req).then(hit =>
+      hit || fetch(req).catch(() => caches.match('./index.html'))
     )
   );
 });

@@ -270,7 +270,7 @@
   const SB_URL = 'https://hoofhoblsbnivtbxqduq.supabase.co';
   const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhvb2Zob2Jsc2JuaXZ0YnhxZHVxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc4ODMyNDMsImV4cCI6MjEwMzQ1OTI0M30.oYEYi3l6KTvkTXLO7kevdCX2UiDLKlGkAy5PIWYgqk4';
   let sb = null, me = null, myRel = null, partnerId = null;
-  let cloudWhispers = [], cloudList = null, cloudReady = false, rtChannel = null;
+  let cloudWhispers = [], cloudList = null, cloudReady = false, rtSelf = null, rtRel = null;
 
   const cloudMode = () => !!(sb && me);
 
@@ -303,12 +303,13 @@
 
   async function loadRelationship(){
     if(!sb || !me) return;
+    startRealtimeSelf();          // 不管有没有配对，先订阅自己的数据
     const { data } = await sb.from('relationships').select('*').or(`user_a.eq.${me.id},user_b.eq.${me.id}`).limit(1);
     if(data && data[0]){
       myRel = data[0];
       partnerId = (myRel.user_a === me.id) ? myRel.user_b : myRel.user_a;
       cloudReady = true;
-      startRealtime();
+      startRealtimeRel();
       await refreshCloud();
     } else {
       myRel = null; partnerId = null; cloudReady = false;
@@ -329,22 +330,32 @@
     render();
   }
 
-  function startRealtime(){
-    if(rtChannel || !sb || !myRel) return;
-    rtChannel = sb.channel('cloud-'+myRel.id)
+  // 自己的计划数据：登录后立刻订阅，不依赖配对 —— 多设备同步靠这条
+  function startRealtimeSelf(){
+    if(rtSelf || !sb || !me) return;
+    rtSelf = sb.channel('self-'+me.id);
+    Object.values(PLAN_TABLES).forEach(t =>
+      rtSelf.on('postgres_changes', { event:'*', schema:'public', table:t }, debouncedPull));
+    rtSelf.subscribe();
+  }
+  // 两人共享的数据：配对成功后才订阅
+  function startRealtimeRel(){
+    if(rtRel || !sb || !myRel) return;
+    rtRel = sb.channel('rel-'+myRel.id)
       .on('postgres_changes', { event:'*', schema:'public', table:'whispers' }, refreshCloud)
       .on('postgres_changes', { event:'*', schema:'public', table:'shared_lists', filter:`relationship_id=eq.${myRel.id}` }, refreshCloud)
-      .on('postgres_changes', { event:'*', schema:'public', table:'tasks' }, debouncedPull)
-      .on('postgres_changes', { event:'*', schema:'public', table:'year_goals' }, debouncedPull)
-      .on('postgres_changes', { event:'*', schema:'public', table:'month_goals' }, debouncedPull)
-      .on('postgres_changes', { event:'*', schema:'public', table:'habits' }, debouncedPull)
-      .on('postgres_changes', { event:'*', schema:'public', table:'special_dates' }, debouncedPull)
       .subscribe();
   }
-  function stopRealtime(){ if(rtChannel){ sb?.removeChannel(rtChannel); rtChannel=null; } }
+  function stopRealtime(){
+    if(rtSelf){ sb?.removeChannel(rtSelf); rtSelf = null; }
+    if(rtRel){ sb?.removeChannel(rtRel); rtRel = null; }
+  }
 
   /* ============ 云端计划数据层（年/月/日/习惯/特别日子） ============ */
   const PLAN_TABLES = { yearGoals:'year_goals', monthGoals:'month_goals', tasks:'tasks', habits:'habits', specialDates:'special_dates' };
+  // 云端主键是 uuid，本机 uid() 生成的是短 id。没成功上云前拿短 id 去查 uuid 列会报
+  // invalid input syntax for type uuid，所以所有云端操作前都要过这道闸
+  const isUuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || '');
 
   function toCloud(kind, r){
     const base = { user_id: me.id };   // RLS 要求 user_id = auth.uid()，必须显式带上
@@ -367,25 +378,30 @@
   }
   // 本地新增：先入本机，云端模式再插入并回填云 id
   async function syncInsert(kind, localRow){
+    localRow.updatedAt = Date.now();
     S[kind].push(localRow); save();
-    if(cloudMode()){
-      const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, localRow)).select().single();
-      if(error){ toast(error.message); return; }
-      localRow.id = data.id; save();
+    if(!cloudMode()){ localRow.cloudPending = true; save(); return; }
+    const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, localRow)).select().single();
+    if(error){
+      localRow.cloudPending = true; save();          // 标记待补传，P1 的队列会消费它
+      toast('已存本机，联网后自动同步');
+      return;
     }
+    localRow.id = data.id; delete localRow.cloudPending; save();
   }
   // 本地修改：对象已就地改好，云端模式同步更新
   async function syncUpdate(kind, localRow){
+    localRow.updatedAt = Date.now();
     save();
-    if(cloudMode()){
-      const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, localRow)).eq('id', localRow.id);
-      if(error) toast(error.message);
-    }
+    if(!cloudMode()) return;
+    if(!isUuid(localRow.id)){ localRow.cloudPending = true; save(); return; }  // 还没上云，等补插
+    const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, localRow)).eq('id', localRow.id);
+    if(error) toast(error.message);
   }
   // 本地删除
   async function syncDelete(kind, id){
     S[kind] = S[kind].filter(x => x.id !== id); save();
-    if(cloudMode()){
+    if(cloudMode() && isUuid(id)){
       const { error } = await sb.from(PLAN_TABLES[kind]).delete().eq('id', id);
       if(error) toast(error.message);
     }
@@ -526,6 +542,9 @@
           authBusy(false); setAuthMode('login');
           return setAuthErr('注册成功，去邮箱点确认后再登录');
         }
+        // 触发器会建 profiles 行，这里兜底把昵称写准（失败也不该挡住登录）
+        try { await sb.from('profiles').upsert({ id: data.user.id, display_name: name }, { onConflict: 'id' }); }
+        catch(e){ console.warn('写 profiles 失败', e); }
         toast('注册成功，已登录');
       }
       guest = false;
