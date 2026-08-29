@@ -268,14 +268,23 @@
   function defaultState(){
     return { yearGoals:[], monthGoals:[], tasks:[], habits:[], specialDates:[],
              pendingDeletes:[],   // 待从云端删除的记录
+             ownerId: null,       // 这批本机数据属于哪个账号（换账号时用来判断要不要清空）
              warmMessage:{text:'',updatedAt:null},
-             warmMessageCloudId: null,  // 云端 warm_messages 行的 uuid
-             warmed:{},                  // 已展示过的悄悄话 id（防重复显示）
              whispers:[], sharedList:[], cleared:{} };
   }
   const loadLocal = () => { try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(KEY))||{}); } catch(e){ return defaultState(); } };
   let S = loadLocal();
   let save = () => localStorage.setItem(KEY, JSON.stringify(S));
+
+  /* ============ 换账号时的数据归属 ============ */
+  // 退出登录原来不清 S，导致下一个账号登录后，上一个人的数据被当成「本机数据」上传，
+  // 直接污染新账号。这里记住数据属于谁，换人就清空。
+  // 首次登录（ownerId 为空）不清 —— 那是离线模式下攒的数据，应该归给这个账号。
+  function adoptLocalData(uid){
+    if(S.ownerId && S.ownerId !== uid) S = defaultState();
+    S.ownerId = uid;
+    save();
+  }
 
   /* ============ 用户设置（warmMessage + cleared 同步） ============ */
   async function loadUserSettings(){
@@ -322,12 +331,12 @@
       if(!authPref().autoLogin) await sb.auth.signOut();
 
       const { data } = await sb.auth.getUser();
-      if(data.user){ me = data.user; guest = false; hideAuth(); await loadRelationship(); }
+      if(data.user){ me = data.user; guest = false; hideAuth(); adoptLocalData(me.id); await loadUserSettings(); await loadRelationship(); }
       else showAuth();
 
       sb.auth.onAuthStateChange(async (e, session) => {
       me = session?.user || null;
-      if(me){ guest = false; hideAuth(); await loadUserSettings(); await loadRelationship(); }
+      if(me){ guest = false; hideAuth(); adoptLocalData(me.id); await loadUserSettings(); await loadRelationship(); }
         else {
           myRel = null; partnerId = null; cloudReady = false; stopRealtime();
           if(!guest) showAuth();          // 退出登录 → 回到登录页
@@ -375,6 +384,9 @@
     rtSelf = sb.channel('self-'+me.id);
     Object.values(PLAN_TABLES).forEach(t =>
       rtSelf.on('postgres_changes', { event:'*', schema:'public', table:t }, debouncedPull));
+    // 「已收尾」标记和暖心话存在 user_settings 里，也要能实时跟过来
+    rtSelf.on('postgres_changes', { event:'*', schema:'public', table:'user_settings' },
+      () => { loadUserSettings().then(render); });
     rtSelf.subscribe();
   }
   // 两人共享的数据：配对成功后才订阅
@@ -405,7 +417,9 @@
     switch(kind){
       case 'yearGoals':   return { ...base, title:r.title, description:r.desc, year:r.year };
       case 'monthGoals':  return { ...base, title:r.title, month:r.month, year_goal_id:r.yearGoalId||null };
-      case 'tasks':       return { ...base, title:r.title, status:r.status, created_date:r.createdDate, plan_date:r.currentDate, original_date:r.originalDate, done_time:r.doneTime, delay_count:r.delayCount };
+      // done_time 是 timestamptz，必须传 ISO 字符串。直接传 Date.now() 的毫秒数字
+      // Postgres 会报 22008 date/time field value out of range —— 勾完成就永远同步不上
+      case 'tasks':       return { ...base, title:r.title, status:r.status, created_date:r.createdDate, plan_date:r.currentDate, original_date:r.originalDate, done_time: r.doneTime ? new Date(r.doneTime).toISOString() : null, delay_count:r.delayCount };
       case 'habits':      return { ...base, name:r.name, done_dates:r.doneDates };
       case 'specialDates':return { ...base, title:r.title, date:r.date };
     }
@@ -415,7 +429,7 @@
     switch(kind){
       case 'yearGoals':   return { id:r.id, title:r.title, desc:r.description, year:r.year, updatedAt:t };
       case 'monthGoals':  return { id:r.id, title:r.title, month:r.month, yearGoalId:r.year_goal_id, updatedAt:t };
-      case 'tasks':       return { id:r.id, title:r.title, status:r.status, createdDate:r.created_date, currentDate:r.plan_date, originalDate:r.original_date, doneTime:r.done_time, delayCount:r.delay_count, updatedAt:t };
+      case 'tasks':       return { id:r.id, title:r.title, status:r.status, createdDate:r.created_date, currentDate:r.plan_date, originalDate:r.original_date, doneTime: r.done_time ? new Date(r.done_time).getTime() : null, delayCount:r.delay_count, updatedAt:t };
       case 'habits':      return { id:r.id, name:r.name, doneDates:r.done_dates||[], updatedAt:t };
       case 'specialDates':return { id:r.id, title:r.title, date:r.date, updatedAt:t };
     }
@@ -439,13 +453,9 @@
   }
   async function syncDelete(kind, id){
     const row = S[kind].find(x => x.id === id);
-    if(row && isUuid(row.id)){
-      S.pendingDeletes.push({ kind, id: row.id });
-    } else if(row && !isUuid(row.id)){
-      // 短 id 没上过云 → 本地删了就行，云端不存在，不需要删
-      // 但还是要保留在 pendingDeletes 以防万一以后上云
-      S.pendingDeletes.push({ kind, id: row.id, localOnly: true });
-    }
+    // 只有已经上过云（uuid）的才需要去云端删；短 id 云端本来就没有，
+    // 加进队列只会让 flushPending 反复拿短 id 去查 uuid 列报类型转换错
+    if(row && isUuid(row.id)) S.pendingDeletes.push({ kind, id: row.id });
     S[kind] = S[kind].filter(x => x.id !== id);
     save();
     await flushPending();
@@ -453,6 +463,18 @@
 
   /* ---------- 待同步队列 ---------- */
   let flushing = false;
+  // 同步失败：网络问题静默等重试；数据/权限问题重试也没用，要明确告诉用户。
+  // 关键：无论哪种都保留 cloudPending 标记，绝不静默丢弃 —— 之前「3 次后清标记」
+  // 正是让 done_time 类型错误被彻底掩盖、数据悄悄不同步的原因。
+  function onSyncFail(kind, r, error){
+    r._retryCount = (r._retryCount || 0) + 1;
+    const msg = (error && error.message) || String(error || '');
+    const isNet = /Failed to fetch|NetworkError|fetch failed|network|timeout/i.test(msg);
+    if(!isNet && r._retryCount === 1){
+      toast('有内容没同步上去，看控制台');
+      console.error('[sync] 非网络错误，重试无用：', kind, r, error);
+    }
+  }
   async function flushPending(){
     if(!cloudMode() || flushing) return;
     flushing = true;
@@ -469,18 +491,19 @@
         try {
           if(isUuid(r.id)){
             const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, r)).eq('id', r.id);
-            if(error){ r._retryCount = (r._retryCount||0) + 1; if(r._retryCount >= 3) { delete r.cloudPending; r._retryCount = 0; } continue; }
+            if(error){ onSyncFail(kind, r, error); continue; }
           } else {
             const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, r)).select().single();
-            if(error){ r._retryCount = (r._retryCount||0) + 1; if(r._retryCount >= 3) { delete r.cloudPending; r._retryCount = 0; } continue; }
+            if(error){ onSyncFail(kind, r, error); continue; }
             r.id = data.id;
           }
           delete r.cloudPending; delete r._retryCount; save();
-        } catch(e){ console.warn('flushPending 单行失败', e); }
+        } catch(e){ onSyncFail(kind, r, e); }
       }
       if(S.pendingDeletes.length && cloudMode()){
         const rest = [];
         for(const d of S.pendingDeletes){
+          if(!isUuid(d.id)) continue;               // 云端没有这条，无需删除，丢弃即可
           try {
             const { error } = await sb.from(PLAN_TABLES[d.kind]).delete().eq('id', d.id);
             if(error){ console.warn('pendingDelete 失败', d, error); rest.push(d); }
