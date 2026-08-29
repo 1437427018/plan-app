@@ -1,5 +1,5 @@
 // Service Worker：离线缓存，让 PWA 断网也能打开
-const CACHE = 'planapp-v4';
+const CACHE = 'planapp-v5';
 const ASSETS = [
   './',
   './index.html',

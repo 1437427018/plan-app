@@ -135,7 +135,7 @@
     #toast {
       position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(20px);
       background: rgba(44,39,34,.92); color: #fff; padding: 10px 18px; border-radius: 999px;
-      font-size: 14px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 80;
+      font-size: 14px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 120;
     }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .cleared-banner {
@@ -149,9 +149,91 @@
       background: #faf6f0; border: 1px dashed var(--line); border-radius: 10px;
       padding: 10px; word-break: break-all; color: var(--ink);
     }
+
+    /* ---------- 登录 / 注册首屏 ---------- */
+    #auth {
+      position: fixed; inset: 0; z-index: 100; background: var(--bg);
+      display: flex; flex-direction: column; overflow: auto;
+      padding: calc(var(--safe-top) + 44px) 22px calc(28px + var(--safe-bottom));
+    }
+    #auth.hide { display: none; }
+    .auth-brand { text-align: center; margin-bottom: 24px; }
+    .auth-logo {
+      width: 62px; height: 62px; border-radius: 20px; margin: 0 auto 14px;
+      background: var(--accent-soft); color: var(--accent); display: grid; place-items: center;
+    }
+    .auth-logo svg { width: 30px; height: 30px; }
+    .auth-brand h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: 2px; }
+    .auth-brand p { margin: 0; color: var(--ink-soft); font-size: 13px; }
+    .auth-tabs {
+      display: flex; gap: 4px; background: var(--accent-soft);
+      border-radius: 12px; padding: 4px; margin-bottom: 16px;
+    }
+    .auth-tabs button { flex: 1; background: transparent; color: var(--accent); font-size: 14px; padding: 9px 0; border-radius: 9px; }
+    .auth-tabs button.on { background: #fff; box-shadow: 0 1px 2px rgba(60,40,20,.07); }
+    .auth-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 16px; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; color: var(--ink-soft); margin: 0 0 6px 2px; }
+    .auth-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 14px; }
+    .cb { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink); cursor: pointer; margin: 0; }
+    .cb input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+    .auth-err { color: #b4483c; font-size: 13px; min-height: 18px; text-align: center; margin: 0 0 8px; }
+    .auth-foot { margin-top: 16px; text-align: center; }
+    .linkbtn { background: transparent; color: var(--ink-soft); font-size: 13px; padding: 6px; text-decoration: underline; font-weight: 500; }
+    .auth-tip { margin-top: 14px; font-size: 12px; color: var(--ink-soft); text-align: center; line-height: 1.7; }
+    #auSubmit[disabled] { opacity: .6; }
   </style>
 </head>
 <body>
+  <!-- 首屏：登录 / 注册 -->
+  <div id="auth">
+    <div class="auth-brand">
+      <div class="auth-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="4" width="18" height="17" rx="3"/><path d="M3 9h18M8 2v4M16 2v4"/>
+          <path d="M8.5 14.5l2 2 4-4"/>
+        </svg>
+      </div>
+      <h1>小计划</h1>
+      <p>两个人，把日子一件件过完</p>
+    </div>
+
+    <div class="auth-tabs">
+      <button id="tabLogin" class="on">登录</button>
+      <button id="tabSignup">注册</button>
+    </div>
+
+    <div class="auth-card">
+      <div class="field">
+        <label>邮箱</label>
+        <input id="auEmail" type="email" placeholder="you@example.com" autocapitalize="off" autocorrect="off" autocomplete="email"/>
+      </div>
+      <div class="field" id="fName" style="display:none">
+        <label>昵称（选填）</label>
+        <input id="auName" type="text" placeholder="ta 看到的名字" autocomplete="nickname"/>
+      </div>
+      <div class="field">
+        <label>密码</label>
+        <input id="auPass" type="password" placeholder="至少 6 位" autocomplete="current-password"/>
+      </div>
+      <div class="field" id="fPass2" style="display:none">
+        <label>确认密码</label>
+        <input id="auPass2" type="password" placeholder="再输一次" autocomplete="new-password"/>
+      </div>
+      <div class="auth-row">
+        <label class="cb"><input type="checkbox" id="auAuto" checked/>自动登录</label>
+        <span class="muted" style="font-size:12px">下次打开直接进入</span>
+      </div>
+      <div class="auth-err" id="auErr"></div>
+      <button class="block" id="auSubmit">登录</button>
+    </div>
+
+    <div class="auth-foot">
+      <button class="linkbtn" id="auGuest">先随便看看（数据只存本机）</button>
+    </div>
+    <div class="auth-tip">注册后自动登录。两人各注册一个账号，<br/>在「更多 → 已登录」里配对，就能共享了。</div>
+  </div>
+
   <div class="topbar">
     <h1 id="viewTitle">今日</h1>
     <div class="right">
@@ -193,17 +275,30 @@
   const cloudMode = () => !!(sb && me);
 
   async function initSB(){
-    if(!window.supabase) return;            // 离线时跳过，全部本机
+    if(!window.supabase){ showAuth('离线中：登录后才能同步'); return; }   // 脚本没加载，停在登录页
     try {
-      sb = window.supabase.createClient(SB_URL, SB_ANON, { auth: { persistSession: true, autoRefreshToken: true } });
+      if(!sb) sb = window.supabase.createClient(SB_URL, SB_ANON, { auth: { persistSession: true, autoRefreshToken: true } });
+
+      // 关掉「自动登录」：不保留上次的会话，每次打开都必须重新登录
+      if(!authPref().autoLogin) await sb.auth.signOut();
+
       const { data } = await sb.auth.getUser();
-      if(data.user){ me = data.user; await loadRelationship(); }
+      if(data.user){ me = data.user; guest = false; hideAuth(); await loadRelationship(); }
+      else showAuth();
+
       sb.auth.onAuthStateChange(async (e, session) => {
         me = session?.user || null;
-        if(me) await loadRelationship(); else { myRel=null; partnerId=null; cloudReady=false; stopRealtime(); }
+        if(me){ guest = false; hideAuth(); await loadRelationship(); }
+        else {
+          myRel = null; partnerId = null; cloudReady = false; stopRealtime();
+          if(!guest) showAuth();          // 退出登录 → 回到登录页
+        }
         render();
       });
-    } catch(err){ console.warn('Supabase 初始化失败，使用本机模式', err); }
+    } catch(err){
+      console.warn('Supabase 初始化失败，使用本机模式', err);
+      showAuth('连不上服务器，检查一下网络');
+    }
   }
 
   async function loadRelationship(){
@@ -352,34 +447,98 @@
   document.getElementById('mask').addEventListener('click', e => { if(e.target.id==='mask') closeSheet(); });
   const v = id => (document.getElementById(id)?.value || '').trim();
 
+  /* ============ 登录 / 注册（首屏） ============ */
+  const AUTH_KEY = 'planapp_auth';
+  const byId = id => document.getElementById(id);
+  function authPref(){
+    try { return Object.assign({ autoLogin:true, email:'' }, JSON.parse(localStorage.getItem(AUTH_KEY)) || {}); }
+    catch(e){ return { autoLogin:true, email:'' }; }
+  }
+  function saveAuthPref(p){ try { localStorage.setItem(AUTH_KEY, JSON.stringify(Object.assign(authPref(), p))); } catch(e){} }
+
+  let authMode = 'login', guest = false;   // guest：离线试用，不强制登录
+
+  function setAuthErr(m){ byId('auErr').textContent = m || ''; }
+  function showAuth(msg){ byId('auth').classList.remove('hide'); if(msg) setAuthErr(msg); }
+  function hideAuth(){ byId('auth').classList.add('hide'); setAuthErr(''); }
+
+  function setAuthMode(m){
+    authMode = m;
+    byId('tabLogin').classList.toggle('on', m === 'login');
+    byId('tabSignup').classList.toggle('on', m === 'signup');
+    byId('fName').style.display  = (m === 'signup') ? '' : 'none';
+    byId('fPass2').style.display = (m === 'signup') ? '' : 'none';
+    byId('auPass').autocomplete  = (m === 'signup') ? 'new-password' : 'current-password';
+    authBusy(false);
+    setAuthErr('');
+  }
+  function authBusy(on, text){
+    const b = byId('auSubmit');
+    b.disabled = !!on;
+    b.textContent = on ? (text || '请稍候…') : (authMode === 'login' ? '登录' : '注册并进入');
+  }
+
+  function friendlyAuthError(e){
+    const m = (e && e.message) ? e.message : String(e || '出错了');
+    if(/Invalid login credentials/i.test(m))      return '邮箱或密码不对';
+    if(/Email not confirmed/i.test(m))            return '邮箱还没确认，去收件箱点一下链接';
+    if(/already registered|already been registered/i.test(m)) return '这个邮箱注册过了，切到「登录」吧';
+    if(/Password should be at least/i.test(m))    return '密码至少 6 位';
+    if(/rate limit|security purposes/i.test(m))    return '试得太频繁，稍等一会儿再来';
+    if(/unable to validate email|invalid format/i.test(m)) return '邮箱格式不太对';
+    if(/Failed to fetch|NetworkError|fetch/i.test(m)) return '网络连不上，检查一下网络';
+    return m;
+  }
+
+  function ensureClient(){
+    if(!window.supabase) return null;
+    if(!sb) sb = window.supabase.createClient(SB_URL, SB_ANON, { auth: { persistSession: true, autoRefreshToken: true } });
+    return sb;
+  }
+
+  async function doAuth(){
+    const email = byId('auEmail').value.trim();
+    const pass  = byId('auPass').value;
+    setAuthErr('');
+    if(!/^\S+@\S+\.\S+$/.test(email)) return setAuthErr('邮箱格式不太对');
+    if(pass.length < 6)               return setAuthErr('密码至少 6 位');
+    if(authMode === 'signup' && pass !== byId('auPass2').value) return setAuthErr('两次输入的密码不一致');
+
+    if(!ensureClient()) return setAuthErr('网络不可用，可先点下面「先随便看看」');
+
+    const auto = byId('auAuto').checked;
+    saveAuthPref({ autoLogin: auto, email: auto ? email : '' });
+
+    authBusy(true, authMode === 'login' ? '登录中…' : '注册中…');
+    try {
+      if(authMode === 'login'){
+        const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+        if(error){ authBusy(false); return setAuthErr(friendlyAuthError(error)); }
+        toast('欢迎回来');
+      } else {
+        const name = byId('auName').value.trim() || email.split('@')[0];
+        const { data, error } = await sb.auth.signUp({
+          email, password: pass,
+          options: { data: { display_name: name } }
+        });
+        if(error){ authBusy(false); return setAuthErr(friendlyAuthError(error)); }
+        if(!data.session){          // 服务端要求邮箱确认
+          authBusy(false); setAuthMode('login');
+          return setAuthErr('注册成功，去邮箱点确认后再登录');
+        }
+        toast('注册成功，已登录');
+      }
+      guest = false;
+      hideAuth();
+    } catch(err){
+      authBusy(false);
+      setAuthErr(friendlyAuthError(err));
+    }
+  }
+
   /* ============ 账号 / 配对 ============ */
   function openAccount(){
-    if(!me){
-      openSheet(`<h3>登录 / 注册</h3>
-        <div class="card">
-          <input id="accEmail" type="email" placeholder="邮箱" style="margin-bottom:8px"/>
-          <input id="accPass" type="password" placeholder="密码（6 位以上）"/>
-          <button class="block" style="margin-top:10px" id="doLogin">登录</button>
-          <button class="block soft" style="margin-top:8px" id="doSignup">注册新账号</button>
-        </div>
-        <div class="muted" style="text-align:center;margin-top:6px">两人各注册一个账号，配对后即可共享。注册后自动登录。</div>`);
-      document.getElementById('doLogin').onclick = async () => {
-        const email = v('accEmail'), pass = v('accPass');
-        if(!email || pass.length<6) return toast('请填邮箱，密码至少 6 位');
-        const { error } = await sb.auth.signInWithPassword({ email, password });
-        if(error) return toast(error.message);
-        closeSheet(); toast('登录成功 ✓');
-      };
-      document.getElementById('doSignup').onclick = async () => {
-        const email = v('accEmail'), pass = v('accPass');
-        if(!email || pass.length<6) return toast('请填邮箱，密码至少 6 位');
-        const { data, error } = await sb.auth.signUp({ email, password });
-        if(error) return toast(error.message);
-        closeSheet();
-        toast(data.session ? '注册成功，已自动登录 ✓' : '注册成功，去邮箱点确认后登录');
-      };
-      return;
-    }
+    if(!me){ guest = false; showAuth(); return; }
     if(!cloudReady){
       openSheet(`<h3>已登录</h3>
         <div class="card"><div class="muted">账号</div><div>${esc(me.email)}</div></div>
@@ -701,7 +860,7 @@
       } else {
         S.sharedList.push({id:uid(),text:val,done:false}); save(); render();
       }
-    });
+    };
     document.querySelectorAll('[data-togglesl]').forEach(b=>b.onclick=async ()=>{
       const id=b.dataset.togglesl;
       if(cloudReady){
@@ -728,6 +887,21 @@
 
   /* ============ 启动 ============ */
   document.getElementById('accountBtn').onclick = openAccount;
+
+  // 首屏默认停在登录页（避免先闪一下主界面）
+  byId('tabLogin').onclick  = () => setAuthMode('login');
+  byId('tabSignup').onclick = () => setAuthMode('signup');
+  byId('auSubmit').onclick  = doAuth;
+  byId('auGuest').onclick   = () => { guest = true; hideAuth(); toast('离线模式：数据只存在本机'); };
+  byId('auAuto').onchange   = e => saveAuthPref({ autoLogin: e.target.checked });
+  ['auEmail','auPass','auPass2','auName'].forEach(id =>
+    byId(id).addEventListener('keydown', e => { if(e.key === 'Enter') doAuth(); }));
+
+  const pref0 = authPref();
+  byId('auAuto').checked = pref0.autoLogin !== false;
+  byId('auEmail').value  = pref0.email || '';
+  setAuthMode('login');
+
   render();
   initSB();
   if('serviceWorker' in navigator){ window.addEventListener('load', ()=> navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW 失败',e)) ); }
