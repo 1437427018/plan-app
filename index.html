@@ -260,6 +260,7 @@
 
   function defaultState(){
     return { yearGoals:[], monthGoals:[], tasks:[], habits:[], specialDates:[],
+             pendingDeletes:[],   // 断网时删掉的、还没能从云端删掉的记录
              warmMessage:{text:'',updatedAt:null}, whispers:[], sharedList:[], cleared:{} };
   }
   const loadLocal = () => { try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(KEY))||{}); } catch(e){ return defaultState(); } };
@@ -314,7 +315,7 @@
     } else {
       myRel = null; partnerId = null; cloudReady = false;
     }
-    await pullPlans();   // 登录后拉取个人计划（年/月/日/习惯/特别日子）
+    await runSync();     // 登录后：先补传本机改动，再拉云端合并
   }
 
   async function refreshCloud(){
@@ -357,8 +358,12 @@
   // invalid input syntax for type uuid，所以所有云端操作前都要过这道闸
   const isUuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || '');
 
+  // 合并的依据：updatedAt 是客户端逻辑时间（毫秒），两边比大小，谁新谁赢
   function toCloud(kind, r){
-    const base = { user_id: me.id };   // RLS 要求 user_id = auth.uid()，必须显式带上
+    const base = {
+      user_id: me.id,                                                  // RLS 要求，必须显式带上
+      updated_at: new Date(r.updatedAt || Date.now()).toISOString(),
+    };
     switch(kind){
       case 'yearGoals':   return { ...base, title:r.title, description:r.desc, year:r.year };
       case 'monthGoals':  return { ...base, title:r.title, month:r.month, year_goal_id:r.yearGoalId||null };
@@ -368,47 +373,89 @@
     }
   }
   function fromCloud(kind, r){
+    const t = r.updated_at ? new Date(r.updated_at).getTime() : 0;
     switch(kind){
-      case 'yearGoals':   return { id:r.id, title:r.title, desc:r.description, year:r.year };
-      case 'monthGoals':  return { id:r.id, title:r.title, month:r.month, yearGoalId:r.year_goal_id };
-      case 'tasks':       return { id:r.id, title:r.title, status:r.status, createdDate:r.created_date, currentDate:r.plan_date, originalDate:r.original_date, doneTime:r.done_time, delayCount:r.delay_count };
-      case 'habits':      return { id:r.id, name:r.name, doneDates:r.done_dates||[] };
-      case 'specialDates':return { id:r.id, title:r.title, date:r.date };
+      case 'yearGoals':   return { id:r.id, title:r.title, desc:r.description, year:r.year, updatedAt:t };
+      case 'monthGoals':  return { id:r.id, title:r.title, month:r.month, yearGoalId:r.year_goal_id, updatedAt:t };
+      case 'tasks':       return { id:r.id, title:r.title, status:r.status, createdDate:r.created_date, currentDate:r.plan_date, originalDate:r.original_date, doneTime:r.done_time, delayCount:r.delay_count, updatedAt:t };
+      case 'habits':      return { id:r.id, name:r.name, doneDates:r.done_dates||[], updatedAt:t };
+      case 'specialDates':return { id:r.id, title:r.title, date:r.date, updatedAt:t };
     }
   }
   // 本地新增：先入本机，云端模式再插入并回填云 id
-  async function syncInsert(kind, localRow){
-    localRow.updatedAt = Date.now();
-    S[kind].push(localRow); save();
-    if(!cloudMode()){ localRow.cloudPending = true; save(); return; }
-    const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, localRow)).select().single();
-    if(error){
-      localRow.cloudPending = true; save();          // 标记待补传，P1 的队列会消费它
-      toast('已存本机，联网后自动同步');
-      return;
-    }
-    localRow.id = data.id; delete localRow.cloudPending; save();
+  // 三个写操作统一：先落本机 + 打待传标记，再交给 flushPending 补传。
+  // 断网时请求失败，标记留着不动，联网后自动重试 —— 改动不会丢。
+  async function syncInsert(kind, row){
+    row.updatedAt = Date.now();
+    row.cloudPending = true;
+    S[kind].push(row); save();
+    await flushPending();
   }
-  // 本地修改：对象已就地改好，云端模式同步更新
-  async function syncUpdate(kind, localRow){
-    localRow.updatedAt = Date.now();
+  async function syncUpdate(kind, row){
+    row.updatedAt = Date.now();
+    row.cloudPending = true;
     save();
-    if(!cloudMode()) return;
-    if(!isUuid(localRow.id)){ localRow.cloudPending = true; save(); return; }  // 还没上云，等补插
-    const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, localRow)).eq('id', localRow.id);
-    if(error) toast(error.message);
+    await flushPending();
   }
-  // 本地删除
   async function syncDelete(kind, id){
-    S[kind] = S[kind].filter(x => x.id !== id); save();
-    if(cloudMode() && isUuid(id)){
-      const { error } = await sb.from(PLAN_TABLES[kind]).delete().eq('id', id);
-      if(error) toast(error.message);
-    }
+    const row = S[kind].find(x => x.id === id);
+    if(row && isUuid(row.id)) S.pendingDeletes.push({ kind, id: row.id });
+    S[kind] = S[kind].filter(x => x.id !== id);
+    save();
+    await flushPending();
   }
 
+  /* ---------- 待同步队列 ---------- */
+  let flushing = false;
+  async function flushPending(){
+    if(!cloudMode() || flushing) return;
+    flushing = true;
+    try {
+      for(const kind of Object.keys(PLAN_TABLES)){
+        for(const r of S[kind].filter(x => x.cloudPending)){
+          if(isUuid(r.id)){
+            const { error } = await sb.from(PLAN_TABLES[kind]).update(toCloud(kind, r)).eq('id', r.id);
+            if(error) continue;                        // 失败就留在队列，下轮再试
+          } else {
+            const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, r)).select().single();
+            if(error) continue;
+            r.id = data.id;                            // 回填云端 uuid
+          }
+          delete r.cloudPending; save();
+        }
+      }
+      if(S.pendingDeletes.length){
+        const rest = [];
+        for(const d of S.pendingDeletes){
+          const { error } = await sb.from(PLAN_TABLES[d.kind]).delete().eq('id', d.id);
+          if(error) rest.push(d);
+        }
+        S.pendingDeletes = rest; save();
+      }
+    } finally { flushing = false; }
+  }
+
+  /* ---------- 拉取与合并 ---------- */
   let syncing = false, pullT = null;
-  function debouncedPull(){ clearTimeout(pullT); pullT = setTimeout(pullPlans, 500); }
+  function debouncedPull(){ clearTimeout(pullT); pullT = setTimeout(runSync, 500); }
+  // 顺序要紧：先把本机改动推上去，再拉云端，否则本机刚改的会被判成过期数据
+  async function runSync(){ await flushPending(); await pullPlans(); await flushPending(); }
+
+  // 双向合并：本机有未上传改动 → 本机赢；否则比 updatedAt，谁新谁赢；云端独有的补进来
+  function mergeRows(localRows, cloudRows){
+    const cloudById = new Map(cloudRows.map(r => [r.id, r]));
+    const out = [];
+    for(const local of localRows){
+      const c = cloudById.get(local.id);
+      if(c) cloudById.delete(local.id);
+      if(local.cloudPending) out.push(local);                    // 待上传，先保住
+      else if(!c) continue;                                      // 云端已经没了 → 本机跟着删
+      else out.push((c.updatedAt || 0) > (local.updatedAt || 0) ? c : local);
+    }
+    for(const c of cloudById.values()) out.push(c);              // 别的设备新增的
+    return out;
+  }
+
   async function pullPlans(){
     if(!cloudMode() || syncing) return;
     syncing = true;
@@ -420,40 +467,20 @@
         sb.from('habits').select('*'),
         sb.from('special_dates').select('*'),
       ]);
-      const cloudEmpty = !((yg.data||[]).length || (mg.data||[]).length || (tk.data||[]).length || (hb.data||[]).length || (sd.data||[]).length);
-      const localHad = S.yearGoals.length || S.monthGoals.length || S.tasks.length || S.habits.length || S.specialDates.length;
-      if(cloudEmpty && localHad){
-        // 首登且云端空：把本机已有的计划迁移上云
-        await seedLocalToCloud();
-        const [yg2, mg2, tk2, hb2, sd2] = await Promise.all([
-          sb.from('year_goals').select('*'), sb.from('month_goals').select('*'),
-          sb.from('tasks').select('*'), sb.from('habits').select('*'), sb.from('special_dates').select('*'),
-        ]);
-        S.yearGoals = (yg2.data||[]).map(r=>fromCloud('yearGoals',r));
-        S.monthGoals = (mg2.data||[]).map(r=>fromCloud('monthGoals',r));
-        S.tasks = (tk2.data||[]).map(r=>fromCloud('tasks',r));
-        S.habits = (hb2.data||[]).map(r=>fromCloud('habits',r));
-        S.specialDates = (sd2.data||[]).map(r=>fromCloud('specialDates',r));
-      } else {
-        S.yearGoals = (yg.data||[]).map(r=>fromCloud('yearGoals',r));
-        S.monthGoals = (mg.data||[]).map(r=>fromCloud('monthGoals',r));
-        S.tasks = (tk.data||[]).map(r=>fromCloud('tasks',r));
-        S.habits = (hb.data||[]).map(r=>fromCloud('habits',r));
-        S.specialDates = (sd.data||[]).map(r=>fromCloud('specialDates',r));
-      }
+      // 从没上过云的老数据（短 id）也标成待传，免得被当成「云端已删」给丢掉
+      Object.keys(PLAN_TABLES).forEach(k => S[k].forEach(r => {
+        if(!isUuid(r.id) && !r.cloudPending){ r.cloudPending = true; r.updatedAt = r.updatedAt || Date.now(); }
+      }));
+      Object.assign(S, {
+        yearGoals:    mergeRows(S.yearGoals,    (yg.data||[]).map(r => fromCloud('yearGoals', r))),
+        monthGoals:   mergeRows(S.monthGoals,   (mg.data||[]).map(r => fromCloud('monthGoals', r))),
+        tasks:        mergeRows(S.tasks,        (tk.data||[]).map(r => fromCloud('tasks', r))),
+        habits:       mergeRows(S.habits,       (hb.data||[]).map(r => fromCloud('habits', r))),
+        specialDates: mergeRows(S.specialDates, (sd.data||[]).map(r => fromCloud('specialDates', r))),
+      });
       save();
     } catch(e){ console.warn('pullPlans 失败', e); }
     finally { syncing = false; render(); }
-  }
-  async function seedLocalToCloud(){
-    const seed = async (kind) => {
-      for(const r of S[kind]){
-        const { data, error } = await sb.from(PLAN_TABLES[kind]).insert(toCloud(kind, r)).select().single();
-        if(!error && data) r.id = data.id;
-      }
-    };
-    await seed('yearGoals'); await seed('monthGoals'); await seed('tasks'); await seed('habits'); await seed('specialDates');
-    save();
   }
 
   /* ============ 工具 ============ */
@@ -923,6 +950,9 @@
 
   render();
   initSB();
+  // 断网时改动都压在本机队列里，恢复网络或切回前台时补传
+  window.addEventListener('online', () => runSync());
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) runSync(); });
   if('serviceWorker' in navigator){ window.addEventListener('load', ()=> navigator.serviceWorker.register('sw.js').catch(e=>console.log('SW 失败',e)) ); }
   </script>
 </body>
