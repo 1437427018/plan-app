@@ -996,6 +996,9 @@
       <div class="check ${st==='done'?'on':''}" data-act="toggle"><span class="st">${stMark}</span></div>
       <div class="label grow">${esc(x.title)}${sub}</div>
       <div class="small-actions">${restore}
+        <button class="iconbtn" data-act="edit" aria-label="编辑">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </button>
         <button class="iconbtn" data-act="del" aria-label="删除">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>
         </button>
@@ -1011,6 +1014,19 @@
     document.querySelectorAll('.task').forEach(el=>{
       const id=el.dataset.id; const task=S.tasks.find(x=>x.id===id); if(!task) return;
       el.querySelector('[data-act=toggle]').onclick = () => openStatusPicker(task);
+      const eb = el.querySelector('[data-act=edit]');
+      if(eb) eb.onclick = () => {
+        openSheet(`<h3>编辑这件事</h3>
+          <div class="field"><label>内容</label><input id="etTitle" type="text" value="${esc(task.title)}"/></div>
+          <button class="block" id="saveTaskEdit">保存</button>
+          <button class="block ghost" id="cancelEdit">取消</button>`);
+        document.getElementById('cancelEdit').onclick=closeSheet;
+        document.getElementById('saveTaskEdit').onclick=async ()=>{
+          const t=document.getElementById('etTitle').value.trim(); if(!t) return;
+          task.title=t; task.updatedAt=Date.now(); task.cloudPending=true;
+          await syncUpdate('tasks', task); closeSheet(); render();
+        };
+      };
       const rb = el.querySelector('[data-act=restore]');
       if(rb) rb.onclick = async () => {
         task.status='todo'; task.doneTime=null;
