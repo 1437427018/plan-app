@@ -1099,7 +1099,7 @@
     const items = S.monthGoals.filter(x=>x.month===m);
     const yearOpts = `<option value="">（不挂在年计划下）</option>` + S.yearGoals.filter(y=>y.year===m.slice(0,4)).map(y=>`<option value="${y.id}">${esc(y.title)}</option>`).join('');
     let h = `<div class="section-title">本月目标</div>`;
-    if(items.length) items.forEach(x=>h+=`<div class="card row"><div class="grow">${esc(x.title)}</div><button class="iconbtn" data-delmonth="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>`);
+    if(items.length) items.forEach(x=>h+=`<div class="card row"><div class="grow">${esc(x.title)}</div><button class="iconbtn" data-editmonth="${x.id}" aria-label="编辑"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button><button class="iconbtn" data-delmonth="${x.id}" aria-label="删除"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>`);
     else h+=`<div class="empty">这个月还没定目标。</div>`;
     h += `<div class="card">
       <div class="section-title" style="margin:0 0 8px">加一个本月目标</div>
@@ -1113,6 +1113,22 @@
     const a=document.getElementById('addMonth'); if(!a) return;
     a.onclick=()=>{ const t=document.getElementById('mTitle').value.trim(); if(!t) return; const row={id:uid(),title:t,month:todayStr().slice(0,7),yearGoalId:document.getElementById('mYear').value||null}; syncInsert('monthGoals', row).then(render); };
     document.querySelectorAll('[data-delmonth]').forEach(b=>b.onclick=async ()=>{ await syncDelete('monthGoals', b.dataset.delmonth); render(); });
+    document.querySelectorAll('[data-editmonth]').forEach(b=>b.onclick=()=>{
+      const x=S.monthGoals.find(y=>y.id===b.dataset.editmonth); if(!x) return;
+      const yearOpts=`<option value="">（不挂在年计划下）</option>`+S.yearGoals.filter(y=>y.year===(x.month||todayStr()).slice(0,4)).map(y=>`<option value="${y.id}" ${y.id===x.yearGoalId?'selected':''}>${esc(y.title)}</option>`).join('');
+      openSheet(`<h3>编辑本月目标</h3>
+        <div class="field"><label>目标</label><input id="emTitle" type="text" value="${esc(x.title)}"/></div>
+        <div class="field"><label>挂在年计划下</label><select id="emYear">${yearOpts}</select></div>
+        <button class="block" id="saveMonthEdit">保存</button>
+        <button class="block ghost" id="cancelEdit">取消</button>`);
+      document.getElementById('cancelEdit').onclick=closeSheet;
+      document.getElementById('saveMonthEdit').onclick=async ()=>{
+        const t=document.getElementById('emTitle').value.trim(); if(!t) return;
+        x.title=t; x.yearGoalId=document.getElementById('emYear').value||null;
+        x.updatedAt=Date.now(); x.cloudPending=true;
+        await syncUpdate('monthGoals', x); closeSheet(); render();
+      };
+    });
   }
 
   /* ============ 年 ============ */
@@ -1120,7 +1136,7 @@
     const y = todayStr().slice(0,4);
     const items = S.yearGoals.filter(x=>x.year===y);
     let h = `<div class="section-title">${y} 年的愿景</div>`;
-    if(items.length) items.forEach(x=>h+=`<div class="card row"><div class="grow"><div>${esc(x.title)}</div>${x.desc?`<div class="muted" style="font-size:13px">${esc(x.desc)}</div>`:''}</div><button class="iconbtn" data-delyear="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>`);
+    if(items.length) items.forEach(x=>h+=`<div class="card row"><div class="grow"><div>${esc(x.title)}</div>${x.desc?`<div class="muted" style="font-size:13px">${esc(x.desc)}</div>`:''}</div><button class="iconbtn" data-edityear="${x.id}" aria-label="编辑"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button><button class="iconbtn" data-delyear="${x.id}" aria-label="删除"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>`);
     else h+=`<div class="empty">还没写今年的愿望。</div>`;
     h += `<div class="card">
       <div class="section-title" style="margin:0 0 8px">写下一个年度目标</div>
@@ -1134,6 +1150,21 @@
     const a=document.getElementById('addYear'); if(!a) return;
     a.onclick=()=>{ const t=document.getElementById('yTitle').value.trim(); if(!t) return; const row={id:uid(),title:t,desc:document.getElementById('yDesc').value.trim(),year:todayStr().slice(0,4)}; syncInsert('yearGoals', row).then(render); };
     document.querySelectorAll('[data-delyear]').forEach(b=>b.onclick=async ()=>{ await syncDelete('yearGoals', b.dataset.delyear); render(); });
+    document.querySelectorAll('[data-edityear]').forEach(b=>b.onclick=()=>{
+      const x=S.yearGoals.find(y=>y.id===b.dataset.edityear); if(!x) return;
+      openSheet(`<h3>编辑年度目标</h3>
+        <div class="field"><label>目标</label><input id="eyTitle" type="text" value="${esc(x.title)}"/></div>
+        <div class="field"><label>为什么想要它</label><input id="eyDesc" type="text" value="${esc(x.desc||'')}" placeholder="可选"/></div>
+        <button class="block" id="saveYearEdit">保存</button>
+        <button class="block ghost" id="cancelEdit">取消</button>`);
+      document.getElementById('cancelEdit').onclick=closeSheet;
+      document.getElementById('saveYearEdit').onclick=async ()=>{
+        const t=document.getElementById('eyTitle').value.trim(); if(!t) return;
+        x.title=t; x.desc=document.getElementById('eyDesc').value.trim();
+        x.updatedAt=Date.now(); x.cloudPending=true;
+        await syncUpdate('yearGoals', x); closeSheet(); render();
+      };
+    });
   }
 
   /* ============ 习惯 ============ */
@@ -1227,7 +1258,7 @@
     if(S.specialDates.length){
       S.specialDates.slice().sort((a,b)=>daysUntil(a.date)-daysUntil(b.date)).forEach(x=>{
         const d=daysUntil(x.date);
-        sd += `<div class="card row"><div class="grow"><div>${esc(x.title)}</div><div class="muted" style="font-size:13px">${x.date} · ${d===0?'就是今天':'还有 '+d+' 天'}</div></div><button class="iconbtn" data-delsd="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>`;
+        sd += `<div class="card row"><div class="grow"><div>${esc(x.title)}</div><div class="muted" style="font-size:13px">${x.date} · ${d===0?'就是今天':'还有 '+d+' 天'}</div></div><button class="iconbtn" data-editsd="${x.id}" aria-label="编辑"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button><button class="iconbtn" data-delsd="${x.id}" aria-label="删除"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>`;
       });
     } else sd+=`<div class="empty">还没有标记特别的日子。</div>`;
     sd += `<div class="card"><div class="row"><input id="sdDate" type="date" style="flex:1"/><input id="sdTitle" type="text" placeholder="日子名字" style="flex:2"/></div><button class="block" style="margin-top:8px" id="addSd">添加</button></div>`;
@@ -1285,6 +1316,21 @@
   function bindMore(){
     const as=document.getElementById('addSd'); if(as) as.onclick=()=>{ const d=document.getElementById('sdDate').value; const t=document.getElementById('sdTitle').value.trim(); if(!d||!t) return; const row={id:uid(),date:d,title:t}; syncInsert('specialDates', row).then(render); };
     document.querySelectorAll('[data-delsd]').forEach(b=>b.onclick=async ()=>{ await syncDelete('specialDates', b.dataset.delsd); render(); });
+    document.querySelectorAll('[data-editsd]').forEach(b=>b.onclick=()=>{
+      const x=S.specialDates.find(y=>y.id===b.dataset.editsd); if(!x) return;
+      openSheet(`<h3>编辑特别日子</h3>
+        <div class="field"><label>日子名字</label><input id="esTitle" type="text" value="${esc(x.title)}"/></div>
+        <div class="field"><label>日期</label><input id="esDate" type="date" value="${x.date}"/></div>
+        <button class="block" id="saveSdEdit">保存</button>
+        <button class="block ghost" id="cancelEdit">取消</button>`);
+      document.getElementById('cancelEdit').onclick=closeSheet;
+      document.getElementById('saveSdEdit').onclick=async ()=>{
+        const t=document.getElementById('esTitle').value.trim(); const d=document.getElementById('esDate').value; if(!t||!d) return;
+        x.title=t; x.date=d;
+        x.updatedAt=Date.now(); x.cloudPending=true;
+        await syncUpdate('specialDates', x); closeSheet(); render();
+      };
+    });
 
     document.querySelectorAll('[data-theme]').forEach(b=>b.onclick=()=>{ applyTheme(b.dataset.theme); render(); });
 
