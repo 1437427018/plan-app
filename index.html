@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <!-- 不设 maximum-scale/user-scalable：禁止缩放违反 WCAG 1.4.4，弱视用户必须能放大 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>小计划</title>
 
   <link rel="manifest" href="manifest.webmanifest" />
@@ -19,15 +20,28 @@
       color-scheme: light;
       --bg: #f6f1ea;
       --card: #fffdfa;
+      --field: #fff;             /* 输入框底色 */
+      --field-soft: #faf6f0;     /* 代码框等次级底色 */
       --ink: #2c2722;
-      --ink-soft: #8a8076;
+      /* 原 #8a8076 在卡片上只有 3.8:1，13px 小字不达 WCAG AA，压暗到 5.4:1 */
+      --ink-soft: #726859;
       --line: #ece4d8;
-      --accent: #c2774f;
+      --accent: #c2774f;         /* 品牌装饰色：边框、圆点、进度环 */
+      --accent-text: #8a5733;    /* 强调色当「文字」用时：卡片上 5.9:1 / 米底 5.4:1 */
+      --accent-strong: #a8603b;  /* 按钮底色，配白字 4.8:1 */
       --accent-soft: #f3e3d8;
+      --on-accent: #fff;
       --done: #6f9c7a;
       --delay: #d39a4e;
       --skip: #b6a89a;
+      --danger: #b4483c;
+      --mask: rgba(40,30,20,.4);
+      --dot: rgba(194,119,79,.20); /* 波点纹理：强调色 20% */
       --radius: 16px;
+      --radius-sm: 10px;
+      --radius-md: 12px;
+      --radius-lg: 20px;
+      --radius-pill: 999px;
       --safe-top: env(safe-area-inset-top, 0px);
       --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
@@ -35,9 +49,14 @@
     html, body { margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
-      background: var(--bg); color: var(--ink);
+      color: var(--ink);
       font-size: 16px; line-height: 1.5;
       padding-bottom: calc(64px + var(--safe-bottom));
+      /* 低饱和波点纹理。用 radial-gradient 平铺而不是内联 SVG pattern：
+         后者要 URL 编码，且 background-size 缩放时点会变形。静态绘制走合成层，不掉帧 */
+      background-color: var(--bg);
+      background-image: radial-gradient(var(--dot) 1.2px, transparent 1.3px);
+      background-size: 18px 18px;
     }
     .topbar {
       padding: calc(var(--safe-top) + 16px) 20px 12px;
@@ -62,7 +81,7 @@
     .tag {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 12px; padding: 2px 9px; border-radius: 999px;
-      background: var(--accent-soft); color: var(--accent); font-weight: 600;
+      background: var(--accent-soft); color: var(--accent-text); font-weight: 600;
     }
     .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
     .dot.todo { background: var(--ink-soft); }
@@ -71,33 +90,52 @@
     .dot.skipped { background: var(--skip); }
 
     input[type=text], input[type=email], input[type=password], input[type=date], textarea, select {
-      width: 100%; border: 1px solid var(--line); border-radius: 12px;
+      width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md);
       padding: 11px 13px; font: inherit; color: var(--ink);
-      background: #fff; outline: none;
+      background: var(--field); outline: none;
     }
     input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+    /* 键盘可达性：整个应用之前 0 处焦点环 */
+    :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
     textarea { resize: vertical; min-height: 64px; }
     button {
-      font: inherit; cursor: pointer; border: 0; border-radius: 12px;
-      padding: 11px 16px; background: var(--accent); color: #fff; font-weight: 600;
-      transition: opacity .15s;
+      font: inherit; cursor: pointer; border: 0; border-radius: var(--radius-md);
+      padding: 11px 16px; background: var(--accent-strong); color: var(--on-accent); font-weight: 600;
+      transition: opacity .15s, filter .15s;
     }
     button:active { opacity: .75; }
-    button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
-    button.soft { background: var(--accent-soft); color: var(--accent); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    @media (hover: hover) { button:not(:disabled):hover { filter: brightness(1.07); } }
+    button.ghost { background: transparent; color: var(--accent-text); border: 1px solid var(--accent); }
+    button.soft { background: var(--accent-soft); color: var(--accent-text); }
     button.block { width: 100%; }
-    button.sm { padding: 7px 12px; font-size: 14px; border-radius: 10px; }
+    /* 原来 padding 7px 12px → 实测高约 34px，低于 44px 触控标准 */
+    button.sm { padding: 10px 14px; font-size: 14px; border-radius: var(--radius-sm); }
     .iconbtn {
       background: transparent; color: var(--ink-soft); padding: 6px;
-      width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px;
+      width: 34px; height: 34px; display: grid; place-items: center;
+      border-radius: var(--radius-sm); position: relative;
     }
     .iconbtn:active { background: var(--line); }
+    /* 视觉仍是 34px，但把可点区域撑到 44×44（WCAG 2.5.8 / Apple HIG），不撑布局 */
+    .iconbtn::after {
+      content: ''; position: absolute; left: 50%; top: 50%;
+      width: 44px; height: 44px; transform: translate(-50%, -50%);
+    }
 
     .task { display: flex; align-items: center; gap: 12px; padding: 12px 2px; border-bottom: 1px solid var(--line); }
     .task:last-child { border-bottom: 0; }
     .check {
       width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--line);
-      flex: 0 0 auto; display: grid; place-items: center; background: #fff; color: #fff;
+      flex: 0 0 auto; display: grid; place-items: center;
+      background: var(--field); color: var(--field);
+      position: relative; cursor: pointer;
+    }
+    /* 打卡圆圈是全应用最高频的点击目标。视觉仍是 24px，命中区撑到 44×44。
+       向外各扩 10px，刚好落在 .task 的 12px gap 内，不会压到标题文字 */
+    .check::after {
+      content: ''; position: absolute; left: 50%; top: 50%;
+      width: 44px; height: 44px; transform: translate(-50%, -50%);
     }
     .check.on { background: var(--done); border-color: var(--done); }
     .task.delayed .check { border-color: var(--delay); }
@@ -113,25 +151,26 @@
 
     .tabbar {
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-      background: rgba(255,253,250,.92); backdrop-filter: saturate(1.4) blur(12px);
+      /* blur 从 12px 降到 6px：12px 的毛玻璃在 iOS 上每帧重算背景，是头号掉帧源 */
+      background: rgba(255,253,250,.94); backdrop-filter: saturate(1.4) blur(6px);
       border-top: 1px solid var(--line);
       display: flex; padding: 6px 4px calc(6px + var(--safe-bottom));
     }
     .tab {
-      flex: 1; background: transparent; border: 0; border-radius: 12px;
+      flex: 1; background: transparent; border: 0; border-radius: var(--radius-md);
       display: flex; flex-direction: column; align-items: center; gap: 3px;
       padding: 6px 0; color: var(--ink-soft); font-size: 11px; font-weight: 600;
     }
-    .tab.active { color: var(--accent); }
+    .tab.active { color: var(--accent-text); }
     .tab svg { width: 22px; height: 22px; }
 
     .mask {
-      position: fixed; inset: 0; background: rgba(40,30,20,.4);
+      position: fixed; inset: 0; background: var(--mask);
       display: none; align-items: flex-end; z-index: 50;
     }
     .mask.show { display: flex; }
     .sheet {
-      background: var(--card); width: 100%; border-radius: 20px 20px 0 0;
+      background: var(--card); width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
       padding: 18px 18px calc(18px + var(--safe-bottom));
       max-height: 84vh; overflow: auto;
     }
@@ -141,19 +180,19 @@
 
     #toast {
       position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(20px);
-      background: rgba(44,39,34,.92); color: #fff; padding: 10px 18px; border-radius: 999px;
+      background: rgba(44,39,34,.92); color: var(--field); padding: 10px 18px; border-radius: var(--radius-pill);
       font-size: 14px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 120;
     }
     #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .cleared-banner {
-      background: var(--accent-soft); color: var(--accent); border-radius: 12px;
+      background: var(--accent-soft); color: var(--accent-text); border-radius: var(--radius-md);
       padding: 10px 14px; font-size: 14px; font-weight: 600; text-align: center; margin: 4px 0 12px;
     }
     .cloud-badge { font-size: 12px; color: var(--done); font-weight: 600; }
     .cloud-note { font-size: 12px; color: var(--ink-soft); margin: -4px 4px 8px; }
     .codebox {
       font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
-      background: #faf6f0; border: 1px dashed var(--line); border-radius: 10px;
+      background: var(--field-soft); border: 1px dashed var(--line); border-radius: var(--radius-sm);
       padding: 10px; word-break: break-all; color: var(--ink);
     }
 
@@ -176,19 +215,42 @@
       display: flex; gap: 4px; background: var(--accent-soft);
       border-radius: 12px; padding: 4px; margin-bottom: 16px;
     }
-    .auth-tabs button { flex: 1; background: transparent; color: var(--accent); font-size: 14px; padding: 9px 0; border-radius: 9px; }
-    .auth-tabs button.on { background: #fff; box-shadow: 0 1px 2px rgba(60,40,20,.07); }
+    /* 文字用 accent-text：accent 原色在这块浅底上只有 2.8:1 */
+    .auth-tabs button { flex: 1; background: transparent; color: var(--accent-text); font-size: 14px; padding: 9px 0; border-radius: 9px; }
+    .auth-tabs button.on { background: var(--field); box-shadow: 0 1px 2px rgba(60,40,20,.07); }
     .auth-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 16px; }
     .field { margin-bottom: 12px; }
     .field label { display: block; font-size: 12px; color: var(--ink-soft); margin: 0 0 6px 2px; }
     .auth-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 14px; }
     .cb { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink); cursor: pointer; margin: 0; }
     .cb input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
-    .auth-err { color: #b4483c; font-size: 13px; min-height: 18px; text-align: center; margin: 0 0 8px; }
+    .auth-err { color: var(--danger); font-size: 13px; min-height: 18px; text-align: center; margin: 0 0 8px; }
     .auth-foot { margin-top: 16px; text-align: center; }
-    .linkbtn { background: transparent; color: var(--ink-soft); font-size: 13px; padding: 6px; text-decoration: underline; font-weight: 500; }
+    /* padding 6px → 12px，把命中区从 27px 撑到 44px 以上 */
+    .linkbtn { background: transparent; color: var(--ink-soft); font-size: 13px; padding: 12px; text-decoration: underline; font-weight: 500; }
     .auth-tip { margin-top: 14px; font-size: 12px; color: var(--ink-soft); text-align: center; line-height: 1.7; }
     #auSubmit[disabled] { opacity: .6; }
+
+    /* ---------- 桌面端（≥768px）---------- */
+    @media (min-width: 768px) {
+      .topbar, .wrap { max-width: 720px; margin-left: auto; margin-right: auto; }
+      /* 底部 Tab 不通栏：改成居中胶囊。否则标题贴左、内容居中，视觉上会错位 */
+      .tabbar {
+        left: 50%; right: auto; transform: translateX(-50%);
+        width: 720px; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+        border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+      }
+      /* 弹层在桌面改居中对话框，而不是贴底的抽屉 */
+      .mask { align-items: center; justify-content: center; padding: 24px; }
+      .sheet { width: 100%; max-width: 480px; border-radius: var(--radius-lg); }
+      /* 双栏用 columns 而不是 grid：grid 会把「小标题」和它下面的「卡片」拆到左右
+         两栏；columns 是自然流式排版，配合 break-inside 能保证卡片不被切断 */
+      #app.two-col { columns: 2; column-gap: 20px; }
+      #app.two-col .card,
+      #app.two-col .cleared-banner,
+      #app.two-col .empty { break-inside: avoid; }
+      #app.two-col .section-title { break-after: avoid; }
+    }
   </style>
 </head>
 <body>
@@ -265,6 +327,10 @@
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
   const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
+  // 本机状态键 → 云端表名。定义在这里而不是同步引擎那边，是因为 save() 的配额降级
+  // 要遍历它；const 有 TDZ，放在 400 行以后会让 save() 在启动早期引用报错。
+  const PLAN_TABLES = { yearGoals:'year_goals', monthGoals:'month_goals', tasks:'tasks', habits:'habits', specialDates:'special_dates' };
+
   function defaultState(){
     return { yearGoals:[], monthGoals:[], tasks:[], habits:[], specialDates:[],
              pendingDeletes:[],   // 待从云端删除的记录
@@ -274,7 +340,47 @@
   }
   const loadLocal = () => { try { return Object.assign(defaultState(), JSON.parse(localStorage.getItem(KEY))||{}); } catch(e){ return defaultState(); } };
   let S = loadLocal();
-  let save = () => localStorage.setItem(KEY, JSON.stringify(S));
+
+  /* ---------- 持久化：配额溢出时分级降级，绝不抛异常 ----------
+     save() 被 render / flushPending / pullPlans / adoptLocalData 到处调用，
+     一旦抛出 QuotaExceededError，整条同步链会当场断掉且用户毫无感知。 */
+  const QUOTA_KEYS = /QuotaExceededError|NS_ERROR_DOM_QUOTA_REACHED|quota/i;
+  const isQuotaErr = e => !!e && (QUOTA_KEYS.test(e.name || '') || QUOTA_KEYS.test(String(e.message || ''))
+                                 || e.code === 22 || e.code === 1014);
+  let _quotaWarned = false;
+  function tryWrite(){ try { localStorage.setItem(KEY, JSON.stringify(S)); return true; } catch(e){ return e; } }
+
+  let save = () => {
+    let e = tryWrite();
+    if(e === true) return true;
+    if(!isQuotaErr(e)){ console.warn('save 失败（非配额问题）', e); return false; }
+
+    // L1 丢掉纯内存的瞬时字段（失败重试计数，丢了不影响正确性）
+    Object.keys(PLAN_TABLES).forEach(k => (S[k] || []).forEach(r => { delete r._retryCount; }));
+    if((e = tryWrite()) === true) return true;
+    if(!isQuotaErr(e)){ console.warn('save 失败（非配额问题）', e); return false; }
+
+    // L2 清掉 30 天前的删除队列。云端已生效的删除不需要本地兜底；
+    //    没同步成功的会一直重试，30 天还没成功的基本是死记录。
+    const cut = Date.now() - 30 * 864e5;
+    S.pendingDeletes = (S.pendingDeletes || []).filter(d => (d.at || 0) > cut);
+    if((e = tryWrite()) === true) return true;
+    if(!isQuotaErr(e)){ console.warn('save 失败（非配额问题）', e); return false; }
+
+    // L3 归档一年前已完结的任务。云端才是持久层，本地只留活跃数据用于快速渲染。
+    const ago = fmt(new Date(Date.now() - 365 * 864e5));
+    S.tasks = S.tasks.filter(t => !((t.status === 'done' || t.status === 'skipped')
+                                    && (t.currentDate || '') < ago));
+    if((e = tryWrite()) === true){ toast('本地空间不足，已归档一年前的历史任务'); return true; }
+    if(!isQuotaErr(e)){ console.warn('save 失败（非配额问题）', e); return false; }
+
+    // L4 彻底写不进去：转纯内存模式。
+    //    关键 —— 绝不能清空 S[k]！清空会让下次 mergeRows 认为「本机已删」，
+    //    反而把还没同步上去的改动丢掉。数据还在内存里，立刻推云端保命。
+    if(!_quotaWarned){ _quotaWarned = true; toast('本地存储已满，改动暂存在当前页面'); }
+    if(cloudMode()) flushPending();
+    return false;
+  };
 
   /* ============ 换账号时的数据归属 ============ */
   // 退出登录原来不清 S，导致下一个账号登录后，上一个人的数据被当成「本机数据」上传，
@@ -403,7 +509,6 @@
   }
 
   /* ============ 云端计划数据层（年/月/日/习惯/特别日子） ============ */
-  const PLAN_TABLES = { yearGoals:'year_goals', monthGoals:'month_goals', tasks:'tasks', habits:'habits', specialDates:'special_dates' };
   // 云端主键是 uuid，本机 uid() 生成的是短 id。没成功上云前拿短 id 去查 uuid 列会报
   // invalid input syntax for type uuid，所以所有云端操作前都要过这道闸
   const isUuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || '');
@@ -455,7 +560,8 @@
     const row = S[kind].find(x => x.id === id);
     // 只有已经上过云（uuid）的才需要去云端删；短 id 云端本来就没有，
     // 加进队列只会让 flushPending 反复拿短 id 去查 uuid 列报类型转换错
-    if(row && isUuid(row.id)) S.pendingDeletes.push({ kind, id: row.id });
+    // at 是入队时间：save() 配额降级时靠它清掉 30 天前的死队列
+    if(row && isUuid(row.id)) S.pendingDeletes.push({ kind, id: row.id, at: Date.now() });
     S[kind] = S[kind].filter(x => x.id !== id);
     save();
     await flushPending();
@@ -506,8 +612,8 @@
           if(!isUuid(d.id)) continue;               // 云端没有这条，无需删除，丢弃即可
           try {
             const { error } = await sb.from(PLAN_TABLES[d.kind]).delete().eq('id', d.id);
-            if(error){ console.warn('pendingDelete 失败', d, error); rest.push(d); }
-          } catch(e){ console.warn('pendingDelete 异常', e); rest.push(d); }
+            if(error){ onSyncFail(d.kind, d, error); rest.push(d); }
+          } catch(e){ onSyncFail(d.kind, d, e); rest.push(d); }
         }
         S.pendingDeletes = rest; save();
       }
@@ -726,6 +832,9 @@
     ab.textContent = me ? (cloudReady ? '已连接' : '已登录') : '登录';
     renderTabs();
     const app = document.getElementById('app');
+    // 双栏只给「今日」「更多」：月/年/习惯是表单+列表，双栏反而割裂。
+    // columns 规则被媒体查询限制在 ≥768px，所以移动端即使带这个类也不生效
+    app.className = 'wrap' + ((view==='today' || view==='more') ? ' two-col' : '');
     if(view==='today') app.innerHTML = viewToday();
     else if(view==='month') app.innerHTML = viewMonth();
     else if(view==='year') app.innerHTML = viewYear();
@@ -937,7 +1046,7 @@
   }
   function bindMonth(){
     const a=document.getElementById('addMonth'); if(!a) return;
-    a.onclick=()=>{ const t=document.getElementById('mTitle').value.trim(); if(!t) return; const row={id:uid(),title:t,month:todayStr().slice(0,7),yearGoalId:document.getElementById('mYear').value||null,done:false}; syncInsert('monthGoals', row).then(render); };
+    a.onclick=()=>{ const t=document.getElementById('mTitle').value.trim(); if(!t) return; const row={id:uid(),title:t,month:todayStr().slice(0,7),yearGoalId:document.getElementById('mYear').value||null}; syncInsert('monthGoals', row).then(render); };
     document.querySelectorAll('[data-delmonth]').forEach(b=>b.onclick=async ()=>{ await syncDelete('monthGoals', b.dataset.delmonth); render(); });
   }
 
