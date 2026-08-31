@@ -190,6 +190,12 @@
     }
     .cloud-badge { font-size: 12px; color: var(--done); font-weight: 600; }
     .cloud-note { font-size: 12px; color: var(--ink-soft); margin: -4px 4px 8px; }
+    .theme-swatch {
+      width: 40px; height: 40px; border-radius: 50%; border: 2px solid var(--line);
+      padding: 0; display: grid; place-items: center; cursor: pointer; flex: 0 0 auto;
+    }
+    .theme-swatch span { width: 20px; height: 20px; border-radius: 50%; display: block; }
+    .theme-swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
     .codebox {
       font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
       background: var(--field-soft); border: 1px dashed var(--line); border-radius: var(--radius-sm);
@@ -357,6 +363,31 @@
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const addDays = (s,n) => { const d=new Date(s+'T00:00:00'); d.setDate(d.getDate()+n); return fmt(d); };
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+  /* ============ 预设主题（设备本地，不同步，避免两人界面不一致） ============ */
+  const THEMES = [
+    { id:'apricot', name:'米杏', bg:'#f6f1ea', card:'#fffdfa', line:'#ece4d8', accent:'#c2774f', accentSoft:'#f3e3d8', accentText:'#8a5733', accentStrong:'#a8603b', dot:'rgba(194,119,79,.20)' },
+    { id:'mist',    name:'雾蓝', bg:'#eef2f5', card:'#fbfdfe', line:'#dde6ec', accent:'#5b8aa6', accentSoft:'#e2edf2', accentText:'#3f6b85', accentStrong:'#3f6b85', dot:'rgba(91,138,166,.20)' },
+    { id:'matcha',  name:'抹茶', bg:'#eef3ea', card:'#fbfdfa', line:'#dde7d6', accent:'#6f9b6e', accentSoft:'#e3eee1', accentText:'#4d734c', accentStrong:'#4d734c', dot:'rgba(111,155,110,.20)' },
+    { id:'rose',    name:'藕粉', bg:'#f7eef2', card:'#fefbfc', line:'#ecdfe6', accent:'#b07a93', accentSoft:'#f3e6ec', accentText:'#8a566e', accentStrong:'#8a566e', dot:'rgba(176,122,147,.20)' },
+  ];
+  const THEME_KEY = 'planapp_theme';
+  function applyTheme(id){
+    const t = THEMES.find(x=>x.id===id) || THEMES[0];
+    const r = document.documentElement.style;
+    r.setProperty('--bg', t.bg);
+    r.setProperty('--card', t.card);
+    r.setProperty('--field', t.card);
+    r.setProperty('--field-soft', t.line);
+    r.setProperty('--line', t.line);
+    r.setProperty('--accent', t.accent);
+    r.setProperty('--accent-soft', t.accentSoft);
+    r.setProperty('--accent-text', t.accentText);
+    r.setProperty('--accent-strong', t.accentStrong);
+    r.setProperty('--dot', t.dot);
+    try { localStorage.setItem(THEME_KEY, t.id); } catch(e){}
+  }
+  function loadTheme(){ applyTheme(localStorage.getItem(THEME_KEY) || 'apricot'); }
   const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
   // 本机状态键 → 云端表名。定义在这里而不是同步引擎那边，是因为 save() 的配额降级
@@ -1241,11 +1272,21 @@
       sl += `<div class="cloud-note">登录并配对后，清单会两人实时同步。</div>`;
     }
 
-    return sd + warm + wh + sl;
+    // 外观（设备本地，不同步）
+    const curTheme = localStorage.getItem(THEME_KEY) || 'apricot';
+    let themeSec = `<div class="section-title">外观</div><div class="card"><div class="row" style="gap:12px">`;
+    THEMES.forEach(t=>{
+      themeSec += `<button class="theme-swatch ${curTheme===t.id?'on':''}" data-theme="${t.id}" aria-label="${t.name} 主题" title="${t.name}" style="background:${t.bg}"><span style="background:${t.accent}"></span></button>`;
+    });
+    themeSec += `</div><div class="muted" style="font-size:12px;margin-top:8px">主题只存在你这台设备，不会同步给对方。</div></div>`;
+
+    return sd + warm + wh + sl + themeSec;
   }
   function bindMore(){
     const as=document.getElementById('addSd'); if(as) as.onclick=()=>{ const d=document.getElementById('sdDate').value; const t=document.getElementById('sdTitle').value.trim(); if(!d||!t) return; const row={id:uid(),date:d,title:t}; syncInsert('specialDates', row).then(render); };
     document.querySelectorAll('[data-delsd]').forEach(b=>b.onclick=async ()=>{ await syncDelete('specialDates', b.dataset.delsd); render(); });
+
+    document.querySelectorAll('[data-theme]').forEach(b=>b.onclick=()=>{ applyTheme(b.dataset.theme); render(); });
 
     const sw=document.getElementById('saveWarm'); if(sw) sw.onclick=()=>{ S.warmMessage={text:document.getElementById('warmText').value,updatedAt:Date.now()}; save(); toast('已保存 ✓'); };
 
@@ -1317,6 +1358,7 @@
   byId('auEmail').value  = pref0.email || '';
   setAuthMode('login');
 
+  loadTheme();
   render();
   initSB();
   // 断网时改动都压在本机队列里，恢复网络或切回前台时补传
