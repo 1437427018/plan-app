@@ -1367,7 +1367,17 @@
     });
     themeSec += `</div><div class="muted" style="font-size:12px;margin-top:8px">主题只存在你这台设备，不会同步给对方。</div></div>`;
 
-    return sd + warm + wh + sl + themeSec;
+    // 数据备份（纯本机，导出下载 / 导入覆盖）
+    let backupSec = `<div class="section-title">数据备份</div><div class="card">
+      <div class="muted" style="font-size:13px;margin-bottom:8px">导出一份存到本机；动数据库或换手机前先备一份。</div>
+      <div class="row" style="gap:8px">
+        <button class="sm soft grow" id="exportBtn">导出备份</button>
+        <button class="sm grow" id="importBtn">导入备份</button>
+      </div>
+      <input type="file" id="importFile" accept="application/json" style="display:none"/>
+    </div>`;
+
+    return sd + warm + wh + sl + themeSec + backupSec;
   }
   function bindMore(){
     const as=document.getElementById('addSd'); if(as) as.onclick=()=>{ const d=document.getElementById('sdDate').value; const t=document.getElementById('sdTitle').value.trim(); if(!d||!t) return; const row={id:uid(),date:d,title:t}; syncInsert('specialDates', row).then(render); };
@@ -1441,6 +1451,43 @@
         S.sharedList=S.sharedList.filter(x=>x.id!==id); save(); render();
       }
     });
+
+    // ===== 数据备份（导出 / 导入）=====
+    const exportBtn=document.getElementById('exportBtn');
+    if(exportBtn) exportBtn.onclick=()=>{
+      try {
+        const blob=new Blob([JSON.stringify(S, null, 2)], {type:'application/json'});
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        const d=new Date();
+        const p=n=>String(n).padStart(2,'0');
+        a.href=url;
+        a.download=`小计划备份_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.json`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+        toast('已导出备份文件 ✓');
+      } catch(e){ console.warn('导出失败', e); toast('导出失败'); }
+    };
+    const importBtn=document.getElementById('importBtn');
+    const importFile=document.getElementById('importFile');
+    if(importBtn && importFile) importBtn.onclick=()=>importFile.click();
+    if(importFile) importFile.onchange=async ()=>{
+      const f=importFile.files && importFile.files[0]; if(!f) return;
+      const reader=new FileReader();
+      reader.onload=async ()=>{
+        let data;
+        try { data=JSON.parse(reader.result); }
+        catch(e){ toast('文件不是有效的 JSON'); importFile.value=''; return; }
+        const looksValid = data && typeof data==='object' &&
+          ('plans' in data || 'tasks' in data || 'habits' in data || 'specialDates' in data);
+        if(!looksValid){ toast('这不是小计划的备份文件'); importFile.value=''; return; }
+        if(!confirm('导入会覆盖当前本机数据，确定继续？\n（建议先做一份导出备份）')){ importFile.value=''; return; }
+        S=data; save(); render();
+        toast('已导入备份（本机数据已覆盖）');
+        importFile.value='';
+      };
+      reader.readAsText(f);
+    };
   }
 
   /* ============ 启动 ============ */
