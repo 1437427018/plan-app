@@ -196,6 +196,15 @@
     }
     .theme-swatch span { width: 20px; height: 20px; border-radius: 50%; display: block; }
     .theme-swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+    .sync-state {
+      font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;
+      color: var(--ink-soft); white-space: nowrap;
+    }
+    .sync-state::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-soft); flex: 0 0 auto; }
+    .sync-state.ok { color: var(--done); } .sync-state.ok::before { background: var(--done); }
+    .sync-state.syncing { color: var(--accent-text); } .sync-state.syncing::before { background: var(--accent); animation: syncPulse 1s ease-in-out infinite; }
+    .sync-state.err { color: var(--danger); } .sync-state.err::before { background: var(--danger); }
+    @keyframes syncPulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
     .codebox {
       font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
       background: var(--field-soft); border: 1px dashed var(--line); border-radius: var(--radius-sm);
@@ -345,6 +354,7 @@
     <h1 id="viewTitle">今日</h1>
     <div class="right">
       <span class="date" id="todayLabel"></span>
+      <span class="sync-state" id="syncState"></span>
       <button class="soft sm" id="accountBtn">登录</button>
     </div>
   </div>
@@ -639,9 +649,12 @@
     r._retryCount = (r._retryCount || 0) + 1;
     const msg = (error && error.message) || String(error || '');
     const isNet = /Failed to fetch|NetworkError|fetch failed|network|timeout/i.test(msg);
-    if(!isNet && r._retryCount === 1){
-      toast('有内容没同步上去，看控制台');
-      console.error('[sync] 非网络错误，重试无用：', kind, r, error);
+    if(!isNet){
+      syncState = 'error'; updateSyncUI();
+      if(r._retryCount === 1){
+        toast('有内容没同步上去，看控制台');
+        console.error('[sync] 非网络错误，重试无用：', kind, r, error);
+      }
     }
   }
   async function flushPending(){
@@ -685,9 +698,30 @@
 
   /* ---------- 拉取与合并 ---------- */
   let syncing = false, pullT = null;
+  let syncState = 'off';   // off | syncing | ok | error
   function debouncedPull(){ clearTimeout(pullT); pullT = setTimeout(runSync, 500); }
+  // 顶部状态点：让用户看得见同步到底成没成（之前是纯黑盒，失败只 toast 一句）
+  function updateSyncUI(){
+    const ss = document.getElementById('syncState'); if(!ss) return;
+    if(!me){ ss.style.display='none'; return; }
+    ss.style.display = '';
+    ss.className = 'sync-state ' + (syncState==='syncing' ? 'syncing' : syncState==='error' ? 'err' : 'ok');
+    ss.textContent = syncState==='syncing' ? '同步中…' : syncState==='error' ? '同步失败' : (cloudReady ? '已同步' : '已登录');
+  }
   // 顺序要紧：先把本机改动推上去，再拉云端，否则本机刚改的会被判成过期数据
-  async function runSync(){ await flushPending(); await pullPlans(); await flushPending(); }
+  async function runSync(){
+    syncState = 'syncing'; updateSyncUI();
+    try {
+      await flushPending();
+      await pullPlans();
+      await flushPending();
+      syncState = 'ok';
+    } catch(e){
+      syncState = 'error';
+      console.warn('runSync 失败', e);
+    }
+    updateSyncUI();
+  }
 
   // 双向合并：本机有未上传改动 → 本机赢；否则比 updatedAt，谁新谁赢；云端独有的补进来
   function mergeRows(localRows, cloudRows){
@@ -715,6 +749,7 @@
   async function pullPlans(){
     if(!cloudMode() || syncing) return;
     syncing = true;
+    let err = false;
     try {
       const [yg, mg, tk, hb, sd] = await Promise.all([
         sb.from('year_goals').select('*'),
@@ -735,8 +770,12 @@
         specialDates: mergeRows(S.specialDates, (sd.data||[]).map(r => fromCloud('specialDates', r))),
       });
       save();
-    } catch(e){ console.warn('pullPlans 失败', e); }
-    finally { syncing = false; render(); }
+    } catch(e){ err = true; console.warn('pullPlans 失败', e); }
+    finally {
+      syncing = false;
+      if(!err && cloudMode()) syncState = 'ok';   // runSync 会再统一判断，这里兜底独立调用的情况
+      render();
+    }
   }
 
   /* ============ 工具 ============ */
@@ -894,6 +933,7 @@
     document.getElementById('todayLabel').textContent = todayStr();
     const ab = document.getElementById('accountBtn');
     ab.textContent = me ? (cloudReady ? '已连接' : '已登录') : '登录';
+    updateSyncUI();
     renderTabs();
     const app = document.getElementById('app');
     // 双栏只给「今日」「更多」：月/年/习惯是表单+列表，双栏反而割裂。
