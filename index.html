@@ -251,6 +251,38 @@
       #app.two-col .empty { break-inside: avoid; }
       #app.two-col .section-title { break-after: avoid; }
     }
+
+    /* ===== 统计页 ===== */
+    .stat-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .stat-summary .c {
+      background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-sm);
+      padding: 14px 10px; text-align: center;
+    }
+    .stat-summary .n { font-size: 26px; font-weight: 700; color: var(--accent-strong); line-height: 1.1; }
+    .stat-summary .t { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+    .heatmap { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; }
+    .heatmap .cell {
+      aspect-ratio: 1; border-radius: 5px; background: var(--line);
+      position: relative; transition: transform .1s;
+    }
+    .heatmap .cell:active { transform: scale(.88); }
+    .heatmap .cell.l1 { background: rgba(194,119,79,.30); }
+    .heatmap .cell.l2 { background: rgba(194,119,79,.52); }
+    .heatmap .cell.l3 { background: rgba(194,119,79,.74); }
+    .heatmap .cell.l4 { background: var(--accent); }
+    @supports (background: color-mix(in srgb, red, blue)) {
+      .heatmap .cell.l1 { background: color-mix(in srgb, var(--accent) 30%, var(--line)); }
+      .heatmap .cell.l2 { background: color-mix(in srgb, var(--accent) 52%, var(--line)); }
+      .heatmap .cell.l3 { background: color-mix(in srgb, var(--accent) 74%, var(--line)); }
+      .heatmap .cell.l4 { background: var(--accent); }
+    }
+    .trend { display: flex; align-items: flex-end; gap: 8px; height: 132px; }
+    .trend .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+    .trend .track { width: 100%; flex: 1; display: flex; align-items: flex-end; }
+    .trend .bar { width: 100%; border-radius: 6px 6px 0 0; background: var(--accent); min-height: 3px; transition: height .25s; }
+    .trend .bar.zero { background: var(--line); }
+    .trend .lab { font-size: 11px; color: var(--ink-soft); }
+    .trend .val { font-size: 11px; font-weight: 700; color: var(--accent-strong); }
   </style>
 </head>
 <body>
@@ -814,6 +846,7 @@
     { id:'month', label:'月', icon:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>' },
     { id:'year', label:'年', icon:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
     { id:'habit', label:'习惯', icon:'<path d="M12 3l2.5 5 5.5.8-4 3.9.9 5.5L12 16l-4.9 2.6.9-5.5-4-3.9 5.5-.8z"/>' },
+    { id:'stats', label:'统计', icon:'<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>' },
     { id:'more', label:'更多', icon:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>' },
   ];
   let view = 'today';
@@ -824,7 +857,7 @@
          ${t.label}</button>`).join('');
     document.querySelectorAll('.tab').forEach(b => b.onclick = () => { view=b.dataset.view; render(); });
   }
-  const TITLES = { today:'今日', month:'本月', year:'今年', habit:'习惯', more:'更多' };
+  const TITLES = { today:'今日', month:'本月', year:'今年', habit:'习惯', stats:'统计', more:'更多' };
   function render(){
     document.getElementById('viewTitle').textContent = TITLES[view];
     document.getElementById('todayLabel').textContent = todayStr();
@@ -839,6 +872,7 @@
     else if(view==='month') app.innerHTML = viewMonth();
     else if(view==='year') app.innerHTML = viewYear();
     else if(view==='habit') app.innerHTML = viewHabit();
+    else if(view==='stats') app.innerHTML = viewStats();
     else app.innerHTML = viewMore();
     bindView();
   }
@@ -1096,6 +1130,57 @@
     a.onclick=()=>{ const t=document.getElementById('hName').value.trim(); if(!t) return; const row={id:uid(),name:t,doneDates:[]}; syncInsert('habits', row).then(render); };
     document.querySelectorAll('[data-habit]').forEach(b=>b.onclick=async ()=>{ const hb=S.habits.find(x=>x.id===b.dataset.habit); const t=todayStr(); const i=hb.doneDates.indexOf(t); if(i>=0) hb.doneDates.splice(i,1); else hb.doneDates.push(t); await syncUpdate('habits', hb); render(); });
     document.querySelectorAll('[data-delhabit]').forEach(b=>b.onclick=async ()=>{ await syncDelete('habits', b.dataset.delhabit); render(); });
+  }
+
+  /* ============ 统计（纯本机数据，零同步依赖） ============ */
+  function viewStats(){
+    // 某一天完成的件数 = 当天标记 done 的任务 + 当天打卡的习惯
+    const dayCount = day => {
+      let n = 0;
+      S.tasks.forEach(t => { if(t.status==='done' && t.doneTime && fmt(new Date(t.doneTime))===day) n++; });
+      S.habits.forEach(h => { if(h.doneDates && h.doneDates.includes(day)) n++; });
+      return n;
+    };
+    const ym = todayStr().slice(0,7);
+    let monthN = 0;
+    S.tasks.forEach(t => { if(t.status==='done' && t.doneTime && fmt(new Date(t.doneTime)).startsWith(ym)) monthN++; });
+    S.habits.forEach(h => { (h.doneDates||[]).forEach(d => { if(d.startsWith(ym)) monthN++; }); });
+    let best = 0;
+    S.habits.forEach(h => { const s = streak(h.doneDates||[]); if(s>best) best=s; });
+    // 本周（周一~周日）
+    const dow = (new Date(todayStr()+'T00:00:00').getDay()+6)%7;
+    const monday = addDays(todayStr(), -dow);
+    const wkDays = []; for(let i=0;i<7;i++) wkDays.push(addDays(monday, i));
+    const wkCounts = wkDays.map(dayCount);
+    const wkTotal = wkCounts.reduce((a,b)=>a+b,0);
+    const wkMax = Math.max(1, ...wkCounts);
+    const WD = ['一','二','三','四','五','六','日'];
+    // 最近 30 天热力图（最早→最近）
+    const cells = []; let total30 = 0;
+    for(let i=29;i>=0;i--){
+      const day = addDays(todayStr(), -i);
+      const n = dayCount(day); total30 += n;
+      const lv = n===0 ? 0 : n===1 ? 1 : n<=3 ? 2 : n<=5 ? 3 : 4;
+      cells.push(`<div class="cell ${lv?'l'+lv:''}" title="${day} · ${n} 件"></div>`);
+    }
+    let h = '';
+    h += `<div class="section-title">最近 30 天</div>`;
+    if(total30===0) h += `<div class="empty">这 30 天还没有完成记录，从今天开始吧。</div>`;
+    else h += `<div class="card"><div class="heatmap">${cells.join('')}</div>
+        <div class="muted" style="font-size:12px;margin-top:10px;display:flex;justify-content:flex-end;gap:6px;align-items:center">少 <span class="cell l1" style="width:12px;height:12px;display:inline-block;border-radius:3px"></span><span class="cell l4" style="width:12px;height:12px;display:inline-block;border-radius:3px"></span> 多</div></div>`;
+    h += `<div class="section-title">本周趋势</div>`;
+    h += `<div class="card"><div class="trend">${wkDays.map((d,i)=>{
+      const n=wkCounts[i]; const pct=Math.round(n/wkMax*100);
+      return `<div class="col"><div class="val">${n||''}</div><div class="track"><div class="bar ${n?'':'zero'}" style="height:${pct}%"></div></div><div class="lab">${WD[i]}</div></div>`;
+    }).join('')}</div></div>`;
+    h += `<div class="section-title">小结</div>`;
+    h += `<div class="stat-summary">
+      <div class="c"><div class="n">${wkTotal}</div><div class="t">本周完成</div></div>
+      <div class="c"><div class="n">${monthN}</div><div class="t">本月完成</div></div>
+      <div class="c"><div class="n">${best}</div><div class="t">最长连续打卡</div></div>
+    </div>`;
+    h += `<div class="muted" style="text-align:center;margin-top:8px">统计只算你本机的数据；配对后想看两个人的，下一步再说。</div>`;
+    return h;
   }
 
   /* ============ 更多 ============ */
