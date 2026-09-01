@@ -202,6 +202,18 @@
       border-radius: 4px;
       transition: width 0.3s ease;
     }
+    .cat-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; vertical-align:middle; flex:0 0 auto; }
+    .cat-chips { display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap; }
+    .cat-chip { border:1px solid var(--line); background:transparent; color:var(--ink-soft); border-radius:14px; padding:3px 10px; font-size:12px; cursor:pointer; }
+    .cat-chip.on { background:var(--c); border-color:var(--c); color:#fff; }
+    .cal-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:4px; margin-bottom:12px; }
+    .grid-h { text-align:center; font-size:11px; color:var(--ink-soft); padding:4px 0; }
+    .grid-c { position:relative; text-align:center; font-size:13px; padding:8px 0; border-radius:8px; background:var(--field); min-height:34px; }
+    .grid-c.empty { background:transparent; }
+    .grid-c.today { background:var(--accent-soft); color:var(--accent-text); font-weight:500; }
+    .sd-dot { display:block; width:6px; height:6px; border-radius:50%; background:var(--accent); margin:3px auto 0; }
+    .task-dot { position:absolute; top:2px; right:4px; font-size:10px; color:var(--ink-soft); }
+    .warm-card { background:var(--accent-soft); }
     .cloud-badge { font-size: 12px; color: var(--done); font-weight: 600; }
     .cloud-note { font-size: 12px; color: var(--ink-soft); margin: -4px 4px 8px; }
     .theme-swatch {
@@ -413,6 +425,13 @@
   }
   function loadTheme(){ applyTheme(localStorage.getItem(THEME_KEY) || 'apricot'); }
   const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const CATS = [
+    { id:'work',   name:'工作', color:'#5b8aa6' },
+    { id:'life',   name:'生活', color:'#c2774f' },
+    { id:'health', name:'健康', color:'#6f9b6e' },
+    { id:'heart',  name:'情感', color:'#b07a93' },
+  ];
+  let curCat = 'life';
 
   // 本机状态键 → 云端表名。定义在这里而不是同步引擎那边，是因为 save() 的配额降级
   // 要遍历它；const 有 TDZ，放在 400 行以后会让 save() 在启动早期引用报错。
@@ -984,7 +1003,10 @@
     h += `<div class="section-title">今日待办</div>`;
     if(todo.length) todo.forEach(x=>h+=taskRow(x,false)); else h+=`<div class="empty">还没有安排，加一件小事吧。</div>`;
 
-    h += `<div class="card"><div class="row"><input id="newTask" type="text" placeholder="加一件今天要做的事…" /><button class="sm" id="addTask">加</button></div></div>`;
+    h += `<div class="card">
+      <div class="cat-chips">${CATS.map(c=>`<button type="button" class="cat-chip${c.id===curCat?' on':''}" data-cat="${c.id}" style="--c:${c.color}">${c.name}</button>`).join('')}</div>
+      <div class="row"><input id="newTask" type="text" placeholder="加一件今天要做的事…" /><button class="sm" id="addTask">加</button></div>
+    </div>`;
 
     if(done.length){
       h += `<div class="section-title">已完成</div>`;
@@ -999,6 +1021,7 @@
     return h;
   }
   function taskRow(x, isDelayed){
+    const cat = CATS.find(c=>c.id===x.category) || CATS[1];
     const st = x.status;
     const cls = st==='done' ? 'done' : (st==='skipped' ? 'skipped' : (isDelayed ? 'delayed' : ''));
     const sub = isDelayed ? `<div class="muted" style="font-size:12px">原 ${x.originalDate} · 已延期 ${x.delayCount} 次</div>` : '';
@@ -1012,7 +1035,7 @@
     const stMark = st==='done' ? '✓' : (st==='delayed' ? '›' : (st==='skipped' ? '–' : ''));
     return `<div class="task ${cls}" data-id="${x.id}">
       <div class="check ${st==='done'?'on':''}" data-act="toggle"><span class="st">${stMark}</span></div>
-      <div class="label grow">${esc(x.title)}${sub}</div>
+      <div class="label grow"><span class="cat-dot" style="background:${cat.color}"></span>${esc(x.title)}${sub}</div>
       <div class="small-actions">${restore}
         <button class="iconbtn" data-act="edit" aria-label="编辑">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
@@ -1025,9 +1048,10 @@
   }
   function bindView(){
     const addT = document.getElementById('addTask');
-    if(addT) addT.onclick = () => { const i=document.getElementById('newTask'); const t=i.value.trim(); if(!t) return; const row={id:uid(),title:t,status:'todo',createdDate:todayStr(),currentDate:todayStr(),originalDate:todayStr(),doneTime:null,delayCount:0}; syncInsert('tasks', row).then(()=>{ i.value=''; i.focus(); }); };
+    if(addT) addT.onclick = () => { const i=document.getElementById('newTask'); const t=i.value.trim(); if(!t) return; const row={id:uid(),title:t,status:'todo',category:curCat,createdDate:todayStr(),currentDate:todayStr(),originalDate:todayStr(),doneTime:null,delayCount:0}; syncInsert('tasks', row).then(()=>{ i.value=''; i.focus(); }); };
     const nt = document.getElementById('newTask');
     if(nt) nt.onkeydown = e => { if(e.key==='Enter') addT.click(); };
+    document.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{ curCat=b.dataset.cat; document.querySelectorAll('[data-cat]').forEach(x=>x.classList.toggle('on', x.dataset.cat===curCat)); });
 
     document.querySelectorAll('.task').forEach(el=>{
       const id=el.dataset.id; const task=S.tasks.find(x=>x.id===id); if(!task) return;
@@ -1170,9 +1194,38 @@
   /* ============ 月 ============ */
   function viewMonth(){
     const m = todayStr().slice(0,7);
+    const y = +m.slice(0,4), mo = +m.slice(5,7);
+    // 即将到来的特别日子（7 天内，含今天）
+    const upcoming = S.specialDates.filter(sd=>{ const du=daysUntil(sd.date); return du>=0 && du<=7; }).sort((a,b)=>daysUntil(a.date)-daysUntil(b.date));
+    let upH = '';
+    if(upcoming.length){
+      upH = `<div class="card warm-card">`;
+      upcoming.forEach(sd=>{ const du=daysUntil(sd.date); upH += `<div class="row" style="gap:8px;margin:4px 0"><span class="sd-dot"></span><div class="grow"><div>${esc(sd.title)}</div><div class="muted" style="font-size:12px">${du===0?'就是今天 🎉':'还有 '+du+' 天'}</div></div></div>`; });
+      upH += `</div>`;
+    }
+    // 日历网格
+    const first = new Date(y, mo-1, 1).getDay();
+    const days = new Date(y, mo, 0).getDate();
+    const sdSet = new Set(S.specialDates.map(sd=>sd.date));
+    const taskMap = {};
+    S.tasks.forEach(t=>{ if(t.currentDate && t.currentDate.startsWith(m)) taskMap[t.currentDate]=(taskMap[t.currentDate]||0)+1; });
+    const wk = ['日','一','二','三','四','五','六'];
+    let cells = wk.map(w=>`<div class="grid-h">${w}</div>`).join('');
+    for(let i=0;i<first;i++) cells += `<div class="grid-c empty"></div>`;
+    const tStr = todayStr();
+    for(let d=1; d<=days; d++){
+      const ds = `${m}-${String(d).padStart(2,'0')}`;
+      const isT = ds===tStr, isSd = sdSet.has(ds), tn = taskMap[ds]||0;
+      cells += `<div class="grid-c${isT?' today':''}">${d}${isSd?`<span class="sd-dot"></span>`:''}${tn?`<span class="task-dot">${tn}</span>`:''}</div>`;
+    }
+    const grid = `<div class="cal-grid">${cells}</div>`;
+
     const items = S.monthGoals.filter(x=>x.month===m);
-    const yearOpts = `<option value="">（不挂在年计划下）</option>` + S.yearGoals.filter(y=>y.year===m.slice(0,4)).map(y=>`<option value="${y.id}">${esc(y.title)}</option>`).join('');
-    let h = `<div class="section-title">本月目标</div>`;
+    const yearOpts = `<option value="">（不挂在年计划下）</option>` + S.yearGoals.filter(yy=>yy.year===m.slice(0,4)).map(yy=>`<option value="${yy.id}">${esc(yy.title)}</option>`).join('');
+    let h = `<div class="section-title">本月概览</div>`;
+    h += upH;
+    h += grid;
+    h += `<div class="section-title">本月目标</div>`;
     if(items.length) items.forEach(x=>h+=`<div class="card row"><div class="grow">${esc(x.title)}</div><button class="iconbtn" data-editmonth="${x.id}" aria-label="编辑"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button><button class="iconbtn" data-delmonth="${x.id}" aria-label="删除"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button></div>`);
     else h+=`<div class="empty">这个月还没定目标。</div>`;
     h += `<div class="card">
@@ -1242,10 +1295,13 @@
   }
 
   /* ============ 习惯 ============ */
-  function streak(dates){
+  function streak(arg){
+    const dates = Array.isArray(arg) ? arg : (arg.doneDates||[]);
+    const frozen = Array.isArray(arg) ? [] : (arg.frozenDates||[]);
+    const set = new Set([...dates, ...frozen]);
     let s=0; let d=new Date(todayStr()+'T00:00:00');
-    if(!dates.includes(todayStr())) d.setDate(d.getDate()-1);
-    while(dates.includes(fmt(d))){ s++; d.setDate(d.getDate()-1); }
+    if(!set.has(todayStr())) d.setDate(d.getDate()-1);
+    while(set.has(fmt(d))){ s++; d.setDate(d.getDate()-1); }
     return s;
   }
   function viewHabit(){
@@ -1253,7 +1309,7 @@
     if(S.habits.length) S.habits.forEach(x=>{
       const on = x.doneDates.includes(todayStr());
       h += `<div class="card row">
-        <div class="grow"><div>${esc(x.name)}</div><div class="muted" style="font-size:13px">连续 ${streak(x.doneDates)} 天</div></div>
+        <div class="grow"><div>${esc(x.name)}</div><div class="muted" style="font-size:13px">连续 ${streak(x)} 天${x.freezesLeft?` · 冻结卡 ×${x.freezesLeft}`:''}</div></div>
         <button class="sm ${on?'soft':''}" data-habit="${x.id}">${on?'今天已打卡':'打卡'}</button>
         <button class="iconbtn" data-menus="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
         <button class="iconbtn" data-delhabit="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
@@ -1264,22 +1320,31 @@
   }
   function bindHabit(){
     const a=document.getElementById('addHabit'); if(!a) return;
-    a.onclick=()=>{ const t=document.getElementById('hName').value.trim(); if(!t) return; const row={id:uid(),name:t,doneDates:[]}; syncInsert('habits', row).then(render); };
+    a.onclick=()=>{ const t=document.getElementById('hName').value.trim(); if(!t) return; const row={id:uid(),name:t,doneDates:[],freezesLeft:1,frozenDates:[]}; syncInsert('habits', row).then(render); };
     document.querySelectorAll('[data-habit]').forEach(b=>b.onclick=async ()=>{ const hb=S.habits.find(x=>x.id===b.dataset.habit); const t=todayStr(); const i=hb.doneDates.indexOf(t); if(i>=0) hb.doneDates.splice(i,1); else hb.doneDates.push(t); await syncUpdate('habits', hb); render(); });
     document.querySelectorAll('[data-delhabit]').forEach(b=>b.onclick=async ()=>{ await syncDelete('habits', b.dataset.delhabit); render(); });
 
-    // 补打卡菜单
+    // 补打卡 / 冻结 菜单
     document.querySelectorAll('[data-menus]').forEach(b=>b.onclick=()=>{
       const id=b.dataset.menus; const hb=S.habits.find(x=>x.id===id); if(!hb) return;
-      openSheet(`<h3>补打卡</h3>
+      openSheet(`<h3>补打卡 / 冻结</h3>
+        <div class="muted" style="font-size:13px;margin-bottom:8px">补打卡会真的记上；冻结卡用来保住连续天数（不记真实打卡），剩 ${hb.freezesLeft||0} 张。</div>
         <div class="field"><label>选择日期</label><input id="makeupDate" type="date" value="${todayStr()}"/></div>
-        <button class="block" id="doMakeup">补上</button>
+        <button class="block" id="doMakeup">补上打卡</button>
+        <button class="block ghost" id="doFreeze">用冻结卡保住</button>
         <button class="block ghost" id="cancelMakeup">取消</button>`);
       document.getElementById('cancelMakeup').onclick=closeSheet;
       document.getElementById('doMakeup').onclick=()=>{
         const d=document.getElementById('makeupDate').value; if(!d) return;
         if(!hb.doneDates.includes(d)) hb.doneDates.push(d);
         save(); closeSheet(); render(); toast('已补打卡 ✓');
+      };
+      document.getElementById('doFreeze').onclick=()=>{
+        const d=document.getElementById('makeupDate').value; if(!d) return;
+        if((hb.freezesLeft||0)<=0){ toast('没有冻结卡了'); return; }
+        if(hb.doneDates.includes(d) || (hb.frozenDates||[]).includes(d)){ toast('那天已经算上了'); return; }
+        hb.frozenDates=hb.frozenDates||[]; hb.frozenDates.push(d); hb.freezesLeft=(hb.freezesLeft||0)-1;
+        save(); closeSheet(); render(); toast('已用冻结卡保住连续 ✓');
       };
     });
   }
