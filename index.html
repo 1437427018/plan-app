@@ -188,6 +188,20 @@
       background: var(--accent-soft); color: var(--accent-text); border-radius: var(--radius-md);
       padding: 10px 14px; font-size: 14px; font-weight: 600; text-align: center; margin: 4px 0 12px;
     }
+    .progress-bar {
+      position: relative;
+      height: 8px;
+      background: var(--line);
+      border-radius: 4px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      transition: width 0.3s ease;
+    }
     .cloud-badge { font-size: 12px; color: var(--done); font-weight: 600; }
     .cloud-note { font-size: 12px; color: var(--ink-soft); margin: -4px 4px 8px; }
     .theme-swatch {
@@ -957,8 +971,12 @@
     const done = todays().filter(x=>x.status==='done');
     const skipped = todays().filter(x=>x.status==='skipped');
     const cleared = S.cleared[t];
+    const total = todo.length + done.length + skipped.length + delayed.length;
+    const pct = total ? Math.round(done.length / total * 100) : 0;
+    const bar = total ? '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10)) : '░░░░░░░░░░';
     let h = '';
     if(cleared) h += `<div class="cleared-banner">今天已经收尾啦 · 明天见 ☀</div>`;
+    if(total && !cleared) h += `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div><span class="progress-text">${done.length}/${total} · ${pct}%</span></div>`;
 
     h += `<div class="section-title">延期 · 从之前挪来</div>`;
     if(delayed.length) delayed.forEach(x=>h+=taskRow(x,true)); else h+=`<div class="empty">没有延期的事，轻松。</div>`;
@@ -1007,7 +1025,7 @@
   }
   function bindView(){
     const addT = document.getElementById('addTask');
-    if(addT) addT.onclick = () => { const i=document.getElementById('newTask'); const t=i.value.trim(); if(!t) return; const row={id:uid(),title:t,status:'todo',createdDate:todayStr(),currentDate:todayStr(),originalDate:todayStr(),doneTime:null,delayCount:0}; syncInsert('tasks', row).then(render); };
+    if(addT) addT.onclick = () => { const i=document.getElementById('newTask'); const t=i.value.trim(); if(!t) return; const row={id:uid(),title:t,status:'todo',createdDate:todayStr(),currentDate:todayStr(),originalDate:todayStr(),doneTime:null,delayCount:0}; syncInsert('tasks', row).then(()=>{ i.value=''; i.focus(); }); };
     const nt = document.getElementById('newTask');
     if(nt) nt.onkeydown = e => { if(e.key==='Enter') addT.click(); };
 
@@ -1105,7 +1123,7 @@
         <div class="opt">
           <button class="sm grow" data-all="done">完成</button>
           <button class="sm ghost grow" data-all="delayed">延后</button>
-          <button class="sm grow" style="background:transparent;color:var(--ink-soft);border:1px solid var(--line)" data-all="skipped">偷懒</button>
+          <button class="sm ghost grow" data-all="skipped">偷懒</button>
         </div>
       </div>`;
     pending.forEach(x=>{
@@ -1115,7 +1133,7 @@
         <div class="opt">
           <button class="soft grow" data-act="done" data-id="${x.id}">完成</button>
           <button class="ghost grow" data-act="delayed" data-id="${x.id}">延后一天</button>
-          <button class="sm grow" style="background:transparent;color:var(--ink-soft);border:1px solid var(--line)" data-act="skipped" data-id="${x.id}">偷懒</button>
+          <button class="ghost grow" data-act="skipped" data-id="${x.id}">偷懒</button>
         </div>
       </div>`;
     });
@@ -1237,6 +1255,7 @@
       h += `<div class="card row">
         <div class="grow"><div>${esc(x.name)}</div><div class="muted" style="font-size:13px">连续 ${streak(x.doneDates)} 天</div></div>
         <button class="sm ${on?'soft':''}" data-habit="${x.id}">${on?'今天已打卡':'打卡'}</button>
+        <button class="iconbtn" data-menus="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
         <button class="iconbtn" data-delhabit="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
       </div>`;
     }); else h+=`<div class="empty">还没有习惯，养一个试试？</div>`;
@@ -1248,6 +1267,21 @@
     a.onclick=()=>{ const t=document.getElementById('hName').value.trim(); if(!t) return; const row={id:uid(),name:t,doneDates:[]}; syncInsert('habits', row).then(render); };
     document.querySelectorAll('[data-habit]').forEach(b=>b.onclick=async ()=>{ const hb=S.habits.find(x=>x.id===b.dataset.habit); const t=todayStr(); const i=hb.doneDates.indexOf(t); if(i>=0) hb.doneDates.splice(i,1); else hb.doneDates.push(t); await syncUpdate('habits', hb); render(); });
     document.querySelectorAll('[data-delhabit]').forEach(b=>b.onclick=async ()=>{ await syncDelete('habits', b.dataset.delhabit); render(); });
+
+    // 补打卡菜单
+    document.querySelectorAll('[data-menus]').forEach(b=>b.onclick=()=>{
+      const id=b.dataset.menus; const hb=S.habits.find(x=>x.id===id); if(!hb) return;
+      openSheet(`<h3>补打卡</h3>
+        <div class="field"><label>选择日期</label><input id="makeupDate" type="date" value="${todayStr()}"/></div>
+        <button class="block" id="doMakeup">补上</button>
+        <button class="block ghost" id="cancelMakeup">取消</button>`);
+      document.getElementById('cancelMakeup').onclick=closeSheet;
+      document.getElementById('doMakeup').onclick=()=>{
+        const d=document.getElementById('makeupDate').value; if(!d) return;
+        if(!hb.doneDates.includes(d)) hb.doneDates.push(d);
+        save(); closeSheet(); render(); toast('已补打卡 ✓');
+      };
+    });
   }
 
   /* ============ 统计（纯本机数据，零同步依赖） ============ */
