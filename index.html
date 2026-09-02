@@ -214,6 +214,14 @@
     .sd-dot { display:block; width:6px; height:6px; border-radius:50%; background:var(--accent); margin:3px auto 0; }
     .task-dot { position:absolute; top:2px; right:4px; font-size:10px; color:var(--ink-soft); }
     .warm-card { background:var(--accent-soft); }
+    .badge-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+    .badge { background:var(--card); border:1px solid var(--line); border-radius:var(--radius-md); padding:12px 10px; text-align:center; }
+    .badge .bi { font-size:22px; line-height:1.2; filter:grayscale(1); opacity:.35; }
+    .badge.on { border-color:var(--accent); background:var(--accent-soft); }
+    .badge.on .bi { filter:none; opacity:1; }
+    .badge .bn { font-size:13px; font-weight:600; margin-top:4px; }
+    .badge .bd { font-size:11px; color:var(--ink-soft); margin-top:2px; }
+    .badge .bp { font-size:11px; color:var(--ink-soft); margin-top:4px; }
     .cloud-badge { font-size: 12px; color: var(--done); font-weight: 600; }
     .cloud-note { font-size: 12px; color: var(--ink-soft); margin: -4px 4px 8px; }
     .theme-swatch {
@@ -402,28 +410,55 @@
 
   /* ============ 预设主题（设备本地，不同步，避免两人界面不一致） ============ */
   const THEMES = [
-    { id:'apricot', name:'米杏', bg:'#f6f1ea', card:'#fffdfa', line:'#ece4d8', accent:'#c2774f', accentSoft:'#f3e3d8', accentText:'#8a5733', accentStrong:'#a8603b', dot:'rgba(194,119,79,.20)' },
-    { id:'mist',    name:'雾蓝', bg:'#eef2f5', card:'#fbfdfe', line:'#dde6ec', accent:'#5b8aa6', accentSoft:'#e2edf2', accentText:'#3f6b85', accentStrong:'#3f6b85', dot:'rgba(91,138,166,.20)' },
-    { id:'matcha',  name:'抹茶', bg:'#eef3ea', card:'#fbfdfa', line:'#dde7d6', accent:'#6f9b6e', accentSoft:'#e3eee1', accentText:'#4d734c', accentStrong:'#4d734c', dot:'rgba(111,155,110,.20)' },
-    { id:'rose',    name:'藕粉', bg:'#f7eef2', card:'#fefbfc', line:'#ecdfe6', accent:'#b07a93', accentSoft:'#f3e6ec', accentText:'#8a566e', accentStrong:'#8a566e', dot:'rgba(176,122,147,.20)' },
+    { id:'apricot', name:'米杏', bg:'#f6f1ea', card:'#fffdfa', line:'#ece4d8', accent:'#c2774f', accentSoft:'#f3e3d8', accentText:'#8a5733', accentStrong:'#a8603b', dot:'rgba(194,119,79,.20)', accentSoftDark:'#3d2f27', accentTextDark:'#e2a582', dotDark:'rgba(194,119,79,.28)' },
+    { id:'mist',    name:'雾蓝', bg:'#eef2f5', card:'#fbfdfe', line:'#dde6ec', accent:'#5b8aa6', accentSoft:'#e2edf2', accentText:'#3f6b85', accentStrong:'#3f6b85', dot:'rgba(91,138,166,.20)', accentSoftDark:'#243341', accentTextDark:'#9fc6de', dotDark:'rgba(91,138,166,.28)' },
+    { id:'matcha',  name:'抹茶', bg:'#eef3ea', card:'#fbfdfa', line:'#dde7d6', accent:'#6f9b6e', accentSoft:'#e3eee1', accentText:'#4d734c', accentStrong:'#4d734c', dot:'rgba(111,155,110,.20)', accentSoftDark:'#26362a', accentTextDark:'#a9cda7', dotDark:'rgba(111,155,110,.28)' },
+    { id:'rose',    name:'藕粉', bg:'#f7eef2', card:'#fefbfc', line:'#ecdfe6', accent:'#b07a93', accentSoft:'#f3e6ec', accentText:'#8a566e', accentStrong:'#8a566e', dot:'rgba(176,122,147,.20)', accentSoftDark:'#3a2b34', accentTextDark:'#e0aac3', dotDark:'rgba(176,122,147,.28)' },
   ];
   const THEME_KEY = 'planapp_theme';
+  const DARK_KEY  = 'planapp_dark';   // 'auto' 跟随系统 | 'on' 总深色 | 'off' 总浅色
+  function isDarkOn(){
+    const pref = localStorage.getItem(DARK_KEY) || 'auto';
+    const sysDark = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    return pref==='on' || (pref==='auto' && sysDark);
+  }
   function applyTheme(id){
     const t = THEMES.find(x=>x.id===id) || THEMES[0];
     const r = document.documentElement.style;
-    r.setProperty('--bg', t.bg);
-    r.setProperty('--card', t.card);
-    r.setProperty('--field', t.card);
-    r.setProperty('--field-soft', t.line);
-    r.setProperty('--line', t.line);
+    const dark = isDarkOn();
+    // 深色只覆盖底色/文字/描边；品牌强调色沿用所选主题，深色下换成提亮版
+    r.setProperty('--bg', dark ? '#1c1a18' : t.bg);
+    r.setProperty('--card', dark ? '#252220' : t.card);
+    r.setProperty('--field', dark ? '#2f2b28' : t.card);
+    r.setProperty('--field-soft', dark ? '#2a2624' : t.line);
+    r.setProperty('--line', dark ? '#3a3633' : t.line);
     r.setProperty('--accent', t.accent);
-    r.setProperty('--accent-soft', t.accentSoft);
-    r.setProperty('--accent-text', t.accentText);
+    r.setProperty('--accent-soft', dark ? t.accentSoftDark : t.accentSoft);
+    r.setProperty('--accent-text', dark ? t.accentTextDark : t.accentText);
     r.setProperty('--accent-strong', t.accentStrong);
-    r.setProperty('--dot', t.dot);
+    r.setProperty('--dot', dark ? t.dotDark : t.dot);
+    if(dark){
+      r.setProperty('--ink', '#ece6df');
+      r.setProperty('--ink-soft', '#a89e94');
+      r.setProperty('--mask', 'rgba(0,0,0,.55)');
+      r.setProperty('color-scheme', 'dark');
+    } else {
+      r.setProperty('--ink', '#2c2722');
+      r.setProperty('--ink-soft', '#726859');
+      r.setProperty('--mask', 'rgba(40,30,20,.4)');
+      r.setProperty('color-scheme', 'light');
+    }
     try { localStorage.setItem(THEME_KEY, t.id); } catch(e){}
   }
-  function loadTheme(){ applyTheme(localStorage.getItem(THEME_KEY) || 'apricot'); }
+  function loadTheme(){
+    applyTheme(localStorage.getItem(THEME_KEY) || 'apricot');
+    if(window.matchMedia){
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const onChange = () => applyTheme(localStorage.getItem(THEME_KEY) || 'apricot');
+      if(mq.addEventListener) mq.addEventListener('change', onChange);
+      else if(mq.addListener) mq.addListener(onChange);
+    }
+  }
   const esc = s => (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const CATS = [
     { id:'work',   name:'工作', color:'#5b8aa6' },
@@ -432,6 +467,7 @@
     { id:'heart',  name:'情感', color:'#b07a93' },
   ];
   let curCat = 'life';
+  const HABIT_PRESETS = ['喝水 8 杯','运动 30 分钟','读书 20 页','23 点前睡','记账','冥想 10 分钟'];
 
   // 本机状态键 → 云端表名。定义在这里而不是同步引擎那边，是因为 save() 的配额降级
   // 要遍历它；const 有 TDZ，放在 400 行以后会让 save() 在启动早期引用报错。
@@ -1315,12 +1351,16 @@
         <button class="iconbtn" data-delhabit="${x.id}"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg></button>
       </div>`;
     }); else h+=`<div class="empty">还没有习惯，养一个试试？</div>`;
-    h += `<div class="card"><div class="row"><input id="hName" type="text" placeholder="习惯名称，如：喝水 8 杯"/><button class="sm" id="addHabit">加</button></div></div>`;
+    h += `<div class="card">
+      <div class="cat-chips">${HABIT_PRESETS.map(p=>`<button type="button" class="cat-chip" data-preset="${esc(p)}">${esc(p)}</button>`).join('')}</div>
+      <div class="row"><input id="hName" type="text" placeholder="习惯名称，如：喝水 8 杯"/><button class="sm" id="addHabit">加</button></div>
+    </div>`;
     return h;
   }
   function bindHabit(){
     const a=document.getElementById('addHabit'); if(!a) return;
     a.onclick=()=>{ const t=document.getElementById('hName').value.trim(); if(!t) return; const row={id:uid(),name:t,doneDates:[],freezesLeft:1,frozenDates:[]}; syncInsert('habits', row).then(render); };
+    document.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{ const i=document.getElementById('hName'); i.value=b.dataset.preset; i.focus(); });
     document.querySelectorAll('[data-habit]').forEach(b=>b.onclick=async ()=>{ const hb=S.habits.find(x=>x.id===b.dataset.habit); const t=todayStr(); const i=hb.doneDates.indexOf(t); if(i>=0) hb.doneDates.splice(i,1); else hb.doneDates.push(t); await syncUpdate('habits', hb); render(); });
     document.querySelectorAll('[data-delhabit]').forEach(b=>b.onclick=async ()=>{ await syncDelete('habits', b.dataset.delhabit); render(); });
 
@@ -1363,7 +1403,7 @@
     S.tasks.forEach(t => { if(t.status==='done' && t.doneTime && fmt(new Date(t.doneTime)).startsWith(ym)) monthN++; });
     S.habits.forEach(h => { (h.doneDates||[]).forEach(d => { if(d.startsWith(ym)) monthN++; }); });
     let best = 0;
-    S.habits.forEach(h => { const s = streak(h.doneDates||[]); if(s>best) best=s; });
+    S.habits.forEach(h => { const s = streak(h); if(s>best) best=s; });   // 含冻结卡保住的天数
     // 本周（周一~周日）
     const dow = (new Date(todayStr()+'T00:00:00').getDay()+6)%7;
     const monday = addDays(todayStr(), -dow);
@@ -1396,6 +1436,23 @@
       <div class="c"><div class="n">${monthN}</div><div class="t">本月完成</div></div>
       <div class="c"><div class="n">${best}</div><div class="t">最长连续打卡</div></div>
     </div>`;
+    // 成就徽章：全部从本机数据实时算，不额外存状态
+    const doneTotal = S.tasks.filter(t=>t.status==='done').length;
+    const clearedDays = Object.keys(S.cleared||{}).length;
+    const bd = [
+      { n:'第一步',   i:'🌱', cur:Math.min(doneTotal,1),   goal:1,   d:'完成第一件事' },
+      { n:'小有成就', i:'🌿', cur:Math.min(doneTotal,10),  goal:10,  d:'累计完成 10 件' },
+      { n:'百件斩',   i:'🌳', cur:Math.min(doneTotal,100), goal:100, d:'累计完成 100 件' },
+      { n:'坚持一周', i:'🔥', cur:Math.min(best,7),       goal:7,   d:'任一习惯连续 7 天' },
+      { n:'习惯养成', i:'🏆', cur:Math.min(best,30),      goal:30,  d:'任一习惯连续 30 天' },
+      { n:'收官之夜', i:'🌙', cur:Math.min(clearedDays,7),goal:7,   d:'收尾今天 7 次' },
+      { n:'一年之计', i:'📝', cur:Math.min(S.yearGoals.length,1), goal:1, d:'写下第一个年计划' },
+    ];
+    h += `<div class="section-title">我的徽章</div>`;
+    h += `<div class="badge-grid">` + bd.map(b=>{
+      const on = b.cur >= b.goal;
+      return `<div class="badge ${on?'on':''}"><div class="bi">${b.i}</div><div class="bn">${b.n}</div><div class="bd">${b.d}</div><div class="bp">${b.cur}/${b.goal}</div></div>`;
+    }).join('') + `</div>`;
     h += `<div class="muted" style="text-align:center;margin-top:8px">统计只算你本机的数据；配对后想看两个人的，下一步再说。</div>`;
     return h;
   }
@@ -1464,7 +1521,10 @@
     THEMES.forEach(t=>{
       themeSec += `<button class="theme-swatch ${curTheme===t.id?'on':''}" data-theme="${t.id}" aria-label="${t.name} 主题" title="${t.name}" style="background:${t.bg}"><span style="background:${t.accent}"></span></button>`;
     });
-    themeSec += `</div><div class="muted" style="font-size:12px;margin-top:8px">主题只存在你这台设备，不会同步给对方。</div></div>`;
+    const darkPref = localStorage.getItem(DARK_KEY) || 'auto';
+    const darkRow = `<div class="row" style="gap:6px;margin-top:10px">` +
+      [['auto','跟随系统'],['on','深色'],['off','浅色']].map(([v,l])=>`<button type="button" class="cat-chip${darkPref===v?' on':''}" data-dark="${v}" style="--c:var(--accent)">${l}</button>`).join('') + `</div>`;
+    themeSec += `</div>` + darkRow + `<div class="muted" style="font-size:12px;margin-top:8px">主题只存在你这台设备，不会同步给对方。</div></div>`;
 
     // 数据备份（纯本机，导出下载 / 导入覆盖）
     let backupSec = `<div class="section-title">数据备份</div><div class="card">
@@ -1498,6 +1558,7 @@
     });
 
     document.querySelectorAll('[data-theme]').forEach(b=>b.onclick=()=>{ applyTheme(b.dataset.theme); render(); });
+    document.querySelectorAll('[data-dark]').forEach(b=>b.onclick=()=>{ try{ localStorage.setItem(DARK_KEY, b.dataset.dark); }catch(e){} applyTheme(localStorage.getItem(THEME_KEY)||'apricot'); render(); });
 
     const sw=document.getElementById('saveWarm'); if(sw) sw.onclick=()=>{ S.warmMessage={text:document.getElementById('warmText').value,updatedAt:Date.now()}; save(); toast('已保存 ✓'); };
 
