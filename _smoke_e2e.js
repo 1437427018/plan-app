@@ -25,15 +25,16 @@ function grabLine(prefix){
 }
 
 const TODAY = '2026-09-02';
-function addDays(s, n){ const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10); }
+// 本地时区格式化：不能用 toISOString()，UTC 在 GMT+8 下会把日期算成前一天
+function fmtLocal(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function addDays(s, n){ const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return fmtLocal(d); }
 const FUTURE = addDays(TODAY, 8); // 未来 → 自动执行
 
 // ---- 桩：状态 + 只供 happy path 用到的东西 ----
 const head = `
 const TODAY = ${JSON.stringify(TODAY)};
 const todayStr = () => TODAY;
-const addDays = (s,n)=>{ const d=new Date(s+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+const addDays = (s,n)=>{ const d=new Date(s+'T00:00:00'); d.setDate(d.getDate()+n); return \`\${d.getFullYear()}-\${String(d.getMonth()+1).padStart(2,'0')}-\${String(d.getDate()).padStart(2,'0')}\`; };
 let _u=0; const uid=()=>'u'+(++_u);
 const streak=()=>3;
 const CATS=[{id:'work',name:'工作'},{id:'life',name:'生活'},{id:'health',name:'健康'},{id:'heart',name:'情感'}];

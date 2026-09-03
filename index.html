@@ -202,6 +202,29 @@
       background: var(--accent-soft); color: var(--accent-text); border-radius: var(--radius-md);
       padding: 10px 14px; font-size: 14px; font-weight: 600; text-align: center; margin: 4px 0 12px;
     }
+    /* ---- 明日计划：今日视图底部的一张内联卡片 ---- */
+    .tmr-card { padding: 0; }
+    .tmr-head {
+      display: flex; align-items: center; gap: 10px; width: 100%;
+      background: none; border: 0; margin: 0; padding: 14px;
+      font: inherit; font-size: 14px; font-weight: 600; color: var(--ink);
+      text-align: left; cursor: pointer;
+    }
+    .tmr-icon { display: inline-flex; color: var(--ink-soft); }
+    .tmr-ar { display: inline-flex; color: var(--ink-soft); transition: transform .2s; }
+    .tmr-card.open .tmr-ar { transform: rotate(180deg); }
+    .tmr-body { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+    .tmr-body .empty { padding: 16px 8px 18px; font-size: 13px; }
+    .tmr-body .row input { margin: 12px 0 0; }
+    .tmr-more {
+      display: block; width: 100%; background: none; border: 0; border-top: 1px solid var(--line);
+      padding: 10px 0; font: inherit; font-size: 13px; color: var(--ink-soft); cursor: pointer;
+    }
+    .date-badge {
+      display: inline-block; margin-left: 6px; padding: 1px 7px; vertical-align: 1px;
+      border: 1px solid var(--line); border-radius: 999px;
+      font-size: 11px; font-weight: 400; color: var(--ink-soft);
+    }
     .progress-bar {
       position: relative;
       height: 8px;
@@ -641,6 +664,8 @@
   const todayStr = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
   const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const addDays = (s,n) => { const d=new Date(s+'T00:00:00'); d.setDate(d.getDate()+n); return fmt(d); };
+  // 周X，只用于「明天 · 周X」徽标文案；不碰存储
+  const weekday = d => ['日','一','二','三','四','五','六'][new Date(d + 'T00:00:00').getDay()];
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
 
   /* ============ 预设主题（设备本地，不同步，避免两人界面不一致） ============ */
@@ -1274,6 +1299,14 @@
 
   /* ============ 今日 ============ */
   function todays(){ const t=todayStr(); return S.tasks.filter(x=>x.currentDate===t); }
+  // 明日计划：明天待办的那批。只筛 todo/delayed —— 做完/偷懒的已经闭环，
+  // 不该占着"还没交代的明天"。纯靠 currentDate 筛选，不新增任何字段。
+  function tomorrows(){
+    const tmr = addDays(todayStr(), 1);
+    return S.tasks.filter(x => x.currentDate === tmr && (x.status === 'todo' || x.status === 'delayed'));
+  }
+  let tmrOpen = null;    // null=自动（今日已收尾则展开，接住睡前规划），true/false=用户手动切过
+  let tmrAll  = false;   // 是否"展开全部"（就地展开，不切视图、不进 TABS）
   function viewToday(){
     const t=todayStr();
     const delayed = todays().filter(x=>x.status==='delayed');
@@ -1285,7 +1318,7 @@
     const pct = total ? Math.round(done.length / total * 100) : 0;
     const bar = total ? '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10)) : '░░░░░░░░░░';
     let h = '';
-    if(cleared) h += `<div class="cleared-banner">今天已经收尾啦 · 明天见 ☀</div>`;
+    if(cleared) h += `<div class="cleared-banner">今天已经收尾啦 · 明天见</div>`;
     if(total && !cleared) h += `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div><span class="progress-text">${done.length}/${total} · ${pct}%</span></div>`;
 
     h += `<div class="section-title">延期 · 从之前挪来</div>`;
@@ -1309,9 +1342,11 @@
     }
     h += `<div class="card"><button class="block soft" id="clearBtn">收尾今天</button></div>`;
     h += `<div class="muted" style="text-align:center;margin-top:6px">点左侧圆圈可以随时改状态；收尾时再给剩下的选个结尾。</div>`;
+    h += viewTomorrowCard();   // 收尾完之后，顺手排明天
     return h;
   }
-  function taskRow(x, isDelayed){
+  // ctx='tmr' 时给标题后追加「明天 · 周X」徽标；今日上下文不传，行为完全不变
+  function taskRow(x, isDelayed, ctx){
     const cat = CATS.find(c=>c.id===x.category) || CATS[1];
     const st = x.status;
     const cls = st==='done' ? 'done' : (st==='skipped' ? 'skipped' : (isDelayed ? 'delayed' : ''));
@@ -1326,7 +1361,7 @@
     const stMark = st==='done' ? '✓' : (st==='delayed' ? '›' : (st==='skipped' ? '–' : ''));
     return `<div class="task ${cls}" data-id="${x.id}">
       <div class="check ${st==='done'?'on':''}" data-act="toggle"><span class="st">${stMark}</span></div>
-      <div class="label grow"><span class="cat-dot" style="background:${cat.color}"></span>${esc(x.title)}${sub}</div>
+      <div class="label grow"><span class="cat-dot" style="background:${cat.color}"></span>${esc(x.title)}${ctx==='tmr'?`<span class="date-badge">明天 · 周${weekday(x.currentDate)}</span>`:''}${sub}</div>
       <div class="small-actions">${restore}
         <button class="iconbtn" data-act="edit" aria-label="编辑">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
@@ -1337,11 +1372,57 @@
       </div>
     </div>`;
   }
+  /* 明日计划：今日视图底部的一张内联卡片。不新增 tab、不新增存储，
+     纯靠 currentDate 筛选。卡片里每一行就是 taskRow，状态/编辑/删除
+     全部走既有的 .task 事件绑定，零新增交互。                        */
+  function viewTomorrowCard(){
+    const list  = tomorrows();
+    const open  = tmrOpen === null ? !!S.cleared[todayStr()] : tmrOpen;
+    const shown = (tmrAll || list.length <= 3) ? list : list.slice(0, 3);
+    const n = list.length;
+    const MOON = '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/>';
+    const CHEV = '<path d="M6 9l6 6 6-6"/>';
+    let h = `<div class="card tmr-card${open ? ' open' : ''}">
+      <button class="tmr-head" id="tmrToggle" type="button">
+        <span class="tmr-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${MOON}</svg></span>
+        <span class="grow">明天的计划 · ${n ? n + ' 件' : '还没安排'}</span>
+        <span class="tmr-ar"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${CHEV}</svg></span>
+      </button>`;
+    if(open){
+      h += `<div class="tmr-body">`;
+      if(n){
+        shown.forEach(x => { h += taskRow(x, false, 'tmr'); });
+        if(list.length > shown.length)
+          h += `<button class="tmr-more" id="tmrMore" type="button">展开全部 ${list.length} 件</button>`;
+      } else {
+        h += `<div class="empty">睡前想好明天做哪几件，明早起来就有着落。</div>`;
+      }
+      h += `<div class="row"><input id="newTaskTmr" type="text" placeholder="加一件明天要做的事…" /><button class="sm" id="addTaskTmr">加</button></div>`;
+      h += `</div>`;
+    }
+    return h + `</div>`;
+  }
   function bindView(){
     const addT = document.getElementById('addTask');
     if(addT) addT.onclick = () => { const i=document.getElementById('newTask'); const t=i.value.trim(); if(!t) return; const row={id:uid(),title:t,status:'todo',category:curCat,createdDate:todayStr(),currentDate:todayStr(),originalDate:todayStr(),doneTime:null,delayCount:0}; syncInsert('tasks', row).then(()=>{ i.value=''; i.focus(); }); };
     const nt = document.getElementById('newTask');
     if(nt) nt.onkeydown = e => { if(e.key==='Enter') addT.click(); };
+    // 明日计划：row 与今日添加只差 currentDate/originalDate 取明天，其余字段逐字一致，
+    // 走同一个 syncInsert —— 绝不自己 push + save
+    const addTmr = document.getElementById('addTaskTmr');
+    if(addTmr) addTmr.onclick = () => {
+      const i = document.getElementById('newTaskTmr'); const t = i.value.trim(); if(!t) return;
+      const tmr = addDays(todayStr(), 1);
+      const row = { id:uid(), title:t, status:'todo', category:curCat, createdDate:todayStr(),
+                    currentDate:tmr, originalDate:tmr, doneTime:null, delayCount:0 };
+      syncInsert('tasks', row).then(()=>{ i.value=''; i.focus(); });
+    };
+    const ntTmr = document.getElementById('newTaskTmr');
+    if(ntTmr) ntTmr.onkeydown = e => { if(e.key==='Enter') addTmr.click(); };
+    const tmrT = document.getElementById('tmrToggle');
+    if(tmrT) tmrT.onclick = () => { tmrOpen = !(tmrOpen === null ? !!S.cleared[todayStr()] : tmrOpen); render(); };
+    const tmrM = document.getElementById('tmrMore');
+    if(tmrM) tmrM.onclick = () => { tmrAll = true; render(); };
     document.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{ curCat=b.dataset.cat; document.querySelectorAll('[data-cat]').forEach(x=>x.classList.toggle('on', x.dataset.cat===curCat)); });
 
     document.querySelectorAll('.task').forEach(el=>{
