@@ -2054,9 +2054,12 @@
      这些只是「地址 + 模型名」的预填，不代表一定能用：国内平台多数不允许浏览器
      跨域直连。真正的判官是设置页那个「测试连接」按钮 —— 它跑在用户自己的浏览
      器里，比我在这台机器上测准。Base URL 一律不带尾斜杠，拼的时候现加。        */
+  // 注意：模型名必须用各家当前在架的型号 —— 旧 ID（如 glm-4-flash、gpt-4o-mini）随时可能下线，
+  // 配错的话点测试连接会得到 404 "没有这个模型"。需要更新时改这里即可。
   const AI_PROVIDERS = [
     { id:'openrouter', name:'OpenRouter（社区实测浏览器可连）', base:'https://openrouter.ai/api/v1',                 model:'' },
-    { id:'zhipu',      name:'智谱 GLM · 免费',                 base:'https://open.bigmodel.cn/api/paas/v4',          model:'glm-4-flash' },
+    { id:'deepseek',   name:'DeepSeek V4-Flash（中文好，按量便宜）', base:'https://api.deepseek.com/v1',           model:'deepseek-v4-flash' },
+    { id:'zhipu',      name:'智谱 GLM · 免费',                 base:'https://open.bigmodel.cn/api/paas/v4',          model:'glm-4.7-flash' },
     { id:'silicon',    name:'硅基流动 · 有免费模型',            base:'https://api.siliconflow.cn/v1',                 model:'Qwen/Qwen2.5-7B-Instruct' },
     { id:'qianfan',    name:'百度千帆 · 免费',                  base:'https://qianfan.baidubce.com/v2',               model:'ernie-speed-128k' },
     { id:'modelscope', name:'魔搭',                             base:'https://api-inference.modelscope.cn/v1',        model:'Qwen/Qwen2.5-7B-Instruct' },
@@ -2065,6 +2068,17 @@
     { id:'openai',     name:'OpenAI',                           base:'https://api.openai.com/v1',                     model:'gpt-4o-mini' },
     { id:'custom',     name:'自定义 / 中转 / 代理',             base:'',                                              model:'' },
   ];
+
+  /* ---------- 请求体构造（含 DeepSeek thinking 关闭） ----------
+     DeepSeek V4-Flash 默认开启 thinking 模式，且 thinking 下 temperature
+     等参数完全无效（官方原话）。关掉之后才走我们的人格温度 + 不浪费 CoT token。
+     只对 base URL 含 deepseek 的配置追加这个字段 —— OpenAI/智谱 等
+     不认这个字段会 400。                                                */
+  function aiBuildBody(cfg, fields){
+    const o = Object.assign({}, fields);
+    if(cfg.base && /deepseek/i.test(cfg.base)) o.thinking = { type: 'disabled' };
+    return JSON.stringify(o);
+  }
 
   /* ---------- 人格 ---------- */
   const PERSONAS = [
@@ -2319,7 +2333,7 @@
       res = await fetch(url, {
         method:'POST', signal: ctrl.signal,
         headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + cfg.key },
-        body: JSON.stringify({ model: cfg.model, messages: msgs, temperature: 0.7 })
+        body: aiBuildBody(cfg, { model: cfg.model, messages: msgs, temperature: 0.7 })
       });
     } catch(e){
       clearTimeout(timer); aiAbort = null;
@@ -2371,7 +2385,7 @@
       res = await fetch(chatUrl(cfg.base), {
         method:'POST', signal: ctrl.signal,
         headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + cfg.key },
-        body: JSON.stringify({ model: cfg.model, messages:[{ role:'user', content: prompt }], max_tokens: 16 })
+        body: aiBuildBody(cfg, { model: cfg.model, messages:[{ role:'user', content: prompt }], max_tokens: 16 })
       });
     } catch(e){
       clearTimeout(timer);
@@ -2727,9 +2741,11 @@
     return h;
   }
   function aiCfgSheet(id){
-    const isNew = !id;
-    const c = isNew ? { id:uid(), name:'', provider:'openrouter', base:'', key:'', model:'' }
-                    : (AI.configs.find(x => x.id === id) || { id:uid(), name:'', provider:'openrouter', base:'', key:'', model:'' });
+    // 「能不能删」取决于找没找到，不是传没传 id —— 用 !id 判断会出现
+    // 「删除按钮在，但点了删不掉」：找不到时 fallback 成新 id，filter 自然筛不到。
+    const found = id ? AI.configs.find(x => x.id === id) : null;
+    const isNew = !found;
+    const c = found || { id:uid(), name:'', provider:'openrouter', base:'', key:'', model:'' };
     const prov = AI_PROVIDERS.find(p => p.id === c.provider) || AI_PROVIDERS[0];
     openSheet(`<h3>${isNew ? '接一个模型' : '改这套配置'}</h3>
       <div class="field"><label>给它起个名</label><input id="cfName" type="text" placeholder="例如：家里的 / 免费的" value="${esc(c.name)}"/></div>
@@ -2772,8 +2788,12 @@
       }
       closeSheet(); render();
     };
-    byId('cfCancel').onclick = closeSheet;
-    if(!isNew) byId('cfDel').onclick = () => {
+    // cfCancel 与 cfDel 是三元二选一：新建态只有前者，编辑态只有后者。
+    // 这里不判空会在编辑态抛 TypeError，把下面 cfDel 的绑定一起带走 ——
+    // 表现就是「删掉这套」按钮点了没反应。
+    const cfCancel = byId('cfCancel'); if(cfCancel) cfCancel.onclick = closeSheet;
+    const cfDel = byId('cfDel');
+    if(!isNew && cfDel) cfDel.onclick = () => {
       AI.configs = AI.configs.filter(x => x.id !== c.id);
       if(AI.curId === c.id) AI.curId = AI.configs[0] ? AI.configs[0].id : null;
       aiSave(); closeSheet(); render();

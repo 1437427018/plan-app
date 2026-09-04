@@ -45,7 +45,8 @@ const code = [
   grab('parseReply'),
   grab('buildSnapshot'),
   grabLine('const catName ='),
-  'return { normDate, normCat, applyActions, parseReply, buildSnapshot };'
+  grab('aiBuildBody'),
+  'return { normDate, normCat, applyActions, parseReply, buildSnapshot, aiBuildBody };'
 ].join('\n');
 
 const M = new Function('CATS','todayStr','addDays','uid','streak','S','AI', code)
@@ -256,6 +257,49 @@ t('快照里带 t1/t2 短引用，为后续结构化改期留口子', () => {
   reset();
   S.tasks = [{ id:'a', title:'买菜', currentDate:TODAY, status:'todo', category:'life' }];
   eq(M.buildSnapshot().includes('[t1]'), true);
+});
+
+console.log('\n== 请求体构造（aiBuildBody）==');
+t('DeepSeek 官方 base URL → 追加 thinking:disabled', () => {
+  const out = JSON.parse(M.aiBuildBody(
+    { base:'https://api.deepseek.com/v1', model:'deepseek-v4-flash', key:'k' },
+    { model:'deepseek-v4-flash', messages:[{role:'user',content:'hi'}], temperature:0.7 }
+  ));
+  eq(out.thinking, { type:'disabled' }, 'thinking 字段');
+  eq(out.temperature, 0.7, 'temperature 必须保留，不能因 thinking 被吞');
+});
+t('中转 / 第三方 DeepSeek base（路径含 deepseek）也识别', () => {
+  const out = JSON.parse(M.aiBuildBody(
+    { base:'https://my-proxy.com/v1/deepseek', model:'deepseek-chat', key:'k' },
+    { model:'deepseek-chat', messages:[] }
+  ));
+  eq(out.thinking, { type:'disabled' });
+});
+t('DeepSeek 域名大小写不敏感', () => {
+  const out = JSON.parse(M.aiBuildBody(
+    { base:'https://API.DEEPSEEK.COM/v1' },
+    { model:'x', messages:[] }
+  ));
+  eq(out.thinking, { type:'disabled' });
+});
+t('智谱 base URL → 不加 thinking', () => {
+  const out = JSON.parse(M.aiBuildBody(
+    { base:'https://open.bigmodel.cn/api/paas/v4' },
+    { model:'glm-4.7-flash', messages:[], temperature:0.7 }
+  ));
+  if(out.thinking !== undefined) throw new Error('不该有 thinking: ' + JSON.stringify(out.thinking));
+  eq(out.temperature, 0.7);
+});
+t('OpenAI 官方 base → 不加 thinking', () => {
+  const out = JSON.parse(M.aiBuildBody(
+    { base:'https://api.openai.com/v1' },
+    { model:'gpt-4o-mini', messages:[] }
+  ));
+  if('thinking' in out) throw new Error('OpenAI 不该收到 thinking');
+});
+t('空 base → 不加 thinking', () => {
+  const out = M.aiBuildBody({ base:'' }, { model:'x', messages:[] });
+  if(out.includes('thinking')) throw new Error('空 base 不该有 thinking');
 });
 
 console.log('\n结果: ' + pass + ' 通过, ' + fail + ' 失败\n');

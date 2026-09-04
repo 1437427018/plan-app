@@ -72,6 +72,7 @@ const parts = [
   grab('aiInsertAll'),
   grabLine('const curCfg ='),
   grabLine('const aiReady ='),
+  grab('aiBuildBody'),
   grab('personaSys'),
   grabLine('const chatUrl ='),
   grab('callLLM'),
